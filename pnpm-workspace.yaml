@@ -1,0 +1,31 @@
+import { defineConfig } from 'vite'
+import { resolve } from 'path'
+
+export default defineConfig({
+  // 构建配置 - 把我们的代码打包成一个可以嵌入任何网页的JS文件
+  build: {
+    lib: {
+      entry: resolve(__dirname, 'src/index.ts'),
+      name: 'WebAssistant',
+      fileName: 'web-assistant',
+      formats: ['umd'] // UMD格式可以在任何环境中使用
+    },
+    rollupOptions: {
+      // 不把这些库打包进去，减小文件大小
+      external: [],
+      output: {
+        globals: {}
+      }
+    }
+  },
+  // 开发服务器配置
+  server: {
+    port: 3000,
+    cors: true
+  },
+  // 让Vite认识.tsx文件
+  esbuild: {
+    jsxFactory: 'h',
+    jsxFragment: 'Fragment'
+  }
+})
