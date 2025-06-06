@@ -45,15 +45,35 @@ fastify.get('/api/status', async (request, reply) => {
 // 启动服务器
 const start = async () => {
   try {
-    // 启动 HTTP 服务器
-    await fastify.listen({ 
-      port: 3001, 
-      host: '0.0.0.0' 
-    })
+    // 启动 HTTP 服务器，指定端口范围自动寻找可用端口
+    let port = 3001
+    let server
+    
+    // 尝试从 3001 开始寻找可用端口
+    while (port < 3010) {
+      try {
+        server = await fastify.listen({ 
+          port: port, 
+          host: '0.0.0.0' 
+        })
+        break
+      } catch (err: any) {
+        if (err.code === 'EADDRINUSE') {
+          console.log(`端口 ${port} 被占用，尝试下一个端口...`)
+          port++
+        } else {
+          throw err
+        }
+      }
+    }
+    
+    if (!server) {
+      throw new Error('无法找到可用端口 (3001-3009)')
+    }
     
     console.log('🚀 服务器启动成功!')
-    console.log('📡 HTTP 服务: http://localhost:3001')
-    console.log('🔌 WebSocket 服务: ws://localhost:3001')
+    console.log(`📡 HTTP 服务: http://localhost:${port}`)
+    console.log(`🔌 WebSocket 服务: ws://localhost:${port}`)
     
     // 创建 Socket.IO 服务器
     const io = new SocketIOServer(fastify.server, {

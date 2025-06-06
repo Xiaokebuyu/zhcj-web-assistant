@@ -1,5 +1,4 @@
 
-
 interface FloatButtonProps {
   isConnected: boolean
   isOpen: boolean
@@ -39,7 +38,13 @@ export function FloatButton({ isConnected, isOpen, onClick, unreadCount = 0 }: F
             />
           </svg>
         )}
+              // 在悬浮按钮中添加声波效果
       </div>
+          <div className="voice-waves">
+          <div className="voice-wave"></div>
+          <div className="voice-wave"></div>
+          <div className="voice-wave"></div>
+     </div>
 
       {/* 连接状态指示器 */}
       <div className={`connection-indicator ${isConnected ? 'connected' : 'disconnected'}`} />

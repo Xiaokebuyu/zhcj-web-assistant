@@ -11,6 +11,7 @@
   ],
   "scripts": {
     "dev": "vite",
+    "dev:watch": "concurrently \"vite build --watch\" \"vite\"",
     "build": "tsc && vite build",
     "build:watch": "vite build --watch",
     "preview": "vite preview",
@@ -23,6 +24,7 @@
   "devDependencies": {
     "@preact/preset-vite": "^2.8.1",
     "@types/node": "^20.10.6",
+    "concurrently": "^9.1.2",
     "typescript": "^5.3.3",
     "vite": "^5.0.10"
   },

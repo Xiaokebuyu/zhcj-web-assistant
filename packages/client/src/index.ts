@@ -97,6 +97,11 @@ export class WebAssistant {
   }
 }
 
+// 导出便捷的初始化函数
+export function init(config: AssistantConfig): WebAssistant {
+  return WebAssistant.init(config)
+}
+
 // 如果是直接在浏览器中使用，挂载到window对象
 if (typeof window !== 'undefined') {
   (window as any).WebAssistant = WebAssistant

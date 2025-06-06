@@ -6,7 +6,7 @@
   "type": "module",
   "packageManager": "pnpm@10.11.1",
   "scripts": {
-    "dev": "pnpm -r --parallel dev",
+    "dev": "trap 'killall -q pnpm vite nodemon ts-node 2>/dev/null; exit' INT; pnpm -r --parallel dev",
     "build": "pnpm -r build",
     "build:client": "pnpm --filter client build",
     "build:server": "pnpm --filter server build",
@@ -14,6 +14,7 @@
     "dev:server": "pnpm --filter server dev",
     "start:server": "pnpm --filter server start",
     "clean": "pnpm -r clean && rm -rf node_modules",
+    "cleanup": "killall -q pnpm vite nodemon ts-node || echo '✅ 开发进程已清理'",
     "install:all": "pnpm install",
     "type-check": "pnpm -r type-check"
   },

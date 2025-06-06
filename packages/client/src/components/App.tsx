@@ -4,6 +4,14 @@ import { ChatDialog } from './ChatDialog'
 import { WebSocketService } from '../services/websocket'
 import { AssistantConfig } from '../index'
 
+// 扩展 Window 接口，添加 Web Speech API 支持
+declare global {
+  interface Window {
+    SpeechRecognition: any
+    webkitSpeechRecognition: any
+  }
+}
+
 interface AppProps {
   config: AssistantConfig
   wsService: WebSocketService
@@ -44,6 +52,18 @@ export function App({ wsService }: AppProps) {
       wsService.disconnect()
     }
   }, [])
+
+  // 使用Web Speech API
+  const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)()
+     recognition.lang = 'zh-CN'
+     recognition.continuous = false
+     recognition.interimResults = true
+
+     recognition.onresult = (event: any) => {
+        const transcript = event.results[0][0].transcript
+        // 处理识别结果
+        console.log(transcript)
+    }
 
   // 发送消息
   const handleSendMessage = (content: string) => {

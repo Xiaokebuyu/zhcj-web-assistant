@@ -28,8 +28,12 @@ export default defineConfig({
   server: {
     port: 3000,
     cors: true,
-    open: true
+    open: '/test.html', // 打开测试页面
+    strictPort: false // 自动寻找下一个可用端口
   },
+  
+  // 配置公共文件访问 - 指向根目录以访问test.html
+  publicDir: '../../public',
   
   // Path aliases
   resolve: {

@@ -15,12 +15,14 @@ This is a React/TypeScript web assistant component library built as a monorepo u
 
 ## Development Commands
 
-**Note**: The project is currently in a skeleton state. The following commands will need to be configured:
-
 - `pnpm install` - Install dependencies across all workspace packages
-- `pnpm build` - Build the component library (needs configuration)
-- `pnpm dev` - Start development server (needs configuration)
+- `pnpm build` - Build the component library
+- `pnpm dev` - Start development server (both client and server in parallel with graceful shutdown)
+- `pnpm dev:client` - Start only the client development server
+- `pnpm dev:server` - Start only the server development server
 - `pnpm test` - Run tests (currently placeholder)
+
+**Note**: The `pnpm dev` command includes graceful shutdown handling - use Ctrl+C to properly terminate all processes.
 
 ## Key Components
 
