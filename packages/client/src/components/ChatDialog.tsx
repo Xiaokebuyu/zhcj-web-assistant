@@ -1,4 +1,4 @@
-import { h } from 'preact'
+
 import { useState, useRef, useEffect } from 'preact/hooks'
 
 interface Message {

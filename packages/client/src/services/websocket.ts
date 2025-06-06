@@ -2,7 +2,6 @@ import { io, Socket } from 'socket.io-client'
 
 export class WebSocketService {
   private socket: Socket | null = null
-  private reconnectAttempts = 0
   private maxReconnectAttempts = 5
   private eventHandlers: Map<string, Function[]> = new Map()
 
@@ -32,7 +31,7 @@ export class WebSocketService {
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
-      maxReconnectionAttempts: this.maxReconnectAttempts,
+      reconnectionAttempts: this.maxReconnectAttempts,
       timeout: 10000
     })
 
@@ -46,7 +45,6 @@ export class WebSocketService {
     // 连接成功
     this.socket.on('connect', () => {
       console.log('✅ 已连接到智能助手服务器')
-      this.reconnectAttempts = 0
       this.emit('status', { connected: true })
     })
 
@@ -58,7 +56,6 @@ export class WebSocketService {
 
     // 重连尝试
     this.socket.on('reconnect_attempt', (attempt) => {
-      this.reconnectAttempts = attempt
       console.log(`🔄 重连尝试 ${attempt}/${this.maxReconnectAttempts}`)
       this.emit('reconnecting', { attempt, maxAttempts: this.maxReconnectAttempts })
     })

@@ -1,4 +1,3 @@
-import { h } from 'preact'
 import { useState, useEffect } from 'preact/hooks'
 import { FloatButton } from './FloatButton'
 import { ChatDialog } from './ChatDialog'
@@ -10,7 +9,7 @@ interface AppProps {
   wsService: WebSocketService
 }
 
-export function App({ config, wsService }: AppProps) {
+export function App({ wsService }: AppProps) {
   // 状态管理
   const [isOpen, setIsOpen] = useState(false) // 对话框是否打开
   const [isConnected, setIsConnected] = useState(false) // 是否连接到服务器

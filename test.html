@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能助手测试页面</title>
+    <style>
+        body {
+            font-family: -apple-system, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: white;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 40px;
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+        }
+        
+        .feature-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin: 30px 0;
+        }
+        
+        .feature {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 20px;
+            border-radius: 15px;
+            text-align: center;
+        }
+        
+        .feature-icon {
+            font-size: 3em;
+            margin-bottom: 10px;
+        }
+        
+        .instructions {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 20px;
+            border-radius: 15px;
+            margin: 20px 0;
+        }
+        
+        .status {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 10px 15px;
+            border-radius: 10px;
+            font-size: 14px;
+        }
+        
+        .status.connected {
+            background: rgba(46, 204, 113, 0.9);
+        }
+        
+        .status.disconnected {
+            background: rgba(231, 76, 60, 0.9);
+        }
+    </style>
+</head>
+<body>
+    <div class="status" id="status">正在连接...</div>
+    
+    <div class="container">
+        <h1>🤖 智能网页助手</h1>
+        
+        <div class="instructions">
+            <h3>📋 使用说明</h3>
+            <p>1. 查看右下角的悬浮按钮（紫色圆形图标）</p>
+            <p>2. 点击悬浮按钮打开对话框</p>
+            <p>3. 输入消息和AI助手聊天</p>
+            <p>4. 尝试问一些关于这个页面的问题</p>
+        </div>
+        
+        <div class="feature-list">
+            <div class="feature">
+                <div class="feature-icon">💬</div>
+                <h3>智能对话</h3>
+                <p>与AI助手进行自然语言对话</p>
+            </div>
+            
+            <div class="feature">
+                <div class="feature-icon">📄</div>
+                <h3>页面分析</h3>
+                <p>分析当前网页内容并回答问题</p>
+            </div>
+            
+            <div class="feature">
+                <div class="feature-icon">🔍</div>
+                <h3>信息查找</h3>
+                <p>帮助查找页面中的特定信息</p>
+            </div>
+            
+            <div class="feature">
+                <div class="feature-icon">💡</div>
+                <h3>智能建议</h3>
+                <p>根据页面内容提供相关建议</p>
+            </div>
+        </div>
+        
+        <div class="instructions">
+            <h3>🎮 试试这些对话</h3>
+            <ul>
+                <li>"你好" - 问候助手</li>
+                <li>"这个页面是做什么的？" - 询问页面信息</li>
+                <li>"帮助" - 查看功能说明</li>
+                <li>"有什么功能？" - 了解助手能力</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- 加载智能助手SDK -->
+    <script src="./packages/client/dist/web-assistant.umd.js"></script>
+    <script>
+        // 初始化智能助手
+        try {
+            const assistant = WebAssistant.init({
+                apiKey: 'test-key-123', // 测试用的API Key
+                position: 'bottom-right',
+                theme: 'auto'
+            })
+            
+            console.log('✅ 智能助手初始化成功')
+            
+            // 监听连接状态
+            window.addEventListener('assistant:status', (event) => {
+                const statusEl = document.getElementById('status')
+                const { connected } = event.detail
+                
+                if (connected) {
+                    statusEl.textContent = '🟢 已连接'
+                    statusEl.className = 'status connected'
+                } else {
+                    statusEl.textContent = '🔴 未连接'
+                    statusEl.className = 'status disconnected'
+                }
+            })
+            
+        } catch (error) {
+            console.error('❌ 智能助手初始化失败:', error)
+            document.getElementById('status').textContent = '❌ 初始化失败'
+        }
+    </script>
+</body>
+</html>

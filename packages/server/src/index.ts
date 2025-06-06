@@ -65,7 +65,6 @@ const start = async () => {
     })
 
     // 初始化服务
-    const connectionManager = new ConnectionManager()
     const messageHandler = new MessageHandler()
 
     // Socket.IO 连接处理
@@ -83,7 +82,7 @@ const start = async () => {
       }
 
       // 注册连接
-      connectionManager.addConnection(socket.id, {
+      ConnectionManager.addConnection(socket.id, {
         apiKey,
         clientInfo,
         connectedAt: new Date()
@@ -131,7 +130,7 @@ const start = async () => {
       // 处理断开连接
       socket.on('disconnect', (reason) => {
         console.log(`🔌 客户端断开连接: ${socket.id}, 原因: ${reason}`)
-        connectionManager.removeConnection(socket.id)
+        ConnectionManager.removeConnection(socket.id)
       })
 
       // 处理错误
