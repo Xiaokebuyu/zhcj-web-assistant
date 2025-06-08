@@ -525,22 +525,8 @@ const assistant = new AIAssistant({
 - ✅ 请求频率限制
 - ✅ 错误重试机制
 
-## 🤝 贡献指南
 
-我们欢迎社区贡献！请遵循以下步骤：
 
-1. **Fork 项目**
-2. **创建特性分支** (`git checkout -b feature/amazing-feature`)
-3. **提交更改** (`git commit -m 'Add amazing feature'`)
-4. **推送分支** (`git push origin feature/amazing-feature`)
-5. **创建 Pull Request**
-
-### 开发规范
-
-- 遵循 ESLint 和 Prettier 配置
-- 编写 TypeScript 类型定义
-- 添加必要的测试用例
-- 更新相关文档
 
 ## 📄 许可证
 
@@ -553,13 +539,6 @@ const assistant = new AIAssistant({
 - [Next.js](https://nextjs.org/) - 优秀的React框架
 - [Tailwind CSS](https://tailwindcss.com/) - 实用的CSS框架
 
-## 📞 联系方式
-
-如有问题或建议，请通过以下方式联系：
-
-- 🐛 **Bug反馈**: [GitHub Issues](https://github.com/your-username/ai-assistant/issues)
-- 💡 **功能建议**: [GitHub Discussions](https://github.com/your-username/ai-assistant/discussions)
-- 📧 **邮件联系**: your-email@example.com
 
 ---
 
