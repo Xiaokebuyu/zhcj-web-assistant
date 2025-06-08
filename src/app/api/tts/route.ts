@@ -57,34 +57,45 @@ export async function POST(request: NextRequest) {
       await fs.mkdir(tempDir, { recursive: true });
     }
 
-    // 构建SSML文本（支持语速、音调、音量调节）
-    const ssmlText = `
-      <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="zh-CN">
-        <voice name="${voiceName}">
-          <prosody rate="${rate}" pitch="${pitch}" volume="${volume}">
-            ${text.replace(/[<>&"']/g, (match) => {
-              const entityMap: { [key: string]: string } = {
-                '<': '&lt;',
-                '>': '&gt;',
-                '&': '&amp;',
-                '"': '&quot;',
-                "'": '&apos;'
-              };
-              return entityMap[match];
-            })}
-          </prosody>
-        </voice>
-      </speak>
-    `;
+    // 转换参数格式为edge-tts支持的格式
+    const convertRate = (rate: string) => {
+      const numericRate = parseFloat(rate.replace('%', ''));
+      if (numericRate > 0) return `+${numericRate}%`;
+      if (numericRate < 0) return `${numericRate}%`;
+      return '+0%';
+    };
 
-    // 调用edge-tts生成语音
+    const convertPitch = (pitch: string) => {
+      // pitch 参数需要Hz格式，将百分比转换为Hz
+      const numericPitch = parseFloat(pitch.replace('%', ''));
+      // 将百分比转换为Hz（大致的映射关系）
+      const pitchHz = Math.round(numericPitch * 2); // 简单的映射：1% ≈ 2Hz
+      if (pitchHz > 0) return `+${pitchHz}Hz`;
+      if (pitchHz < 0) return `${pitchHz}Hz`;
+      return '+0Hz';
+    };
+
+    const convertVolume = (volume: string) => {
+      const numericVolume = parseFloat(volume.replace('%', ''));
+      if (numericVolume > 0) return `+${numericVolume}%`;
+      if (numericVolume < 0) return `${numericVolume}%`;
+      return '+0%';
+    };
+
+    // 调用edge-tts生成语音（使用命令行参数控制语音属性）
     const edgeTtsPath = path.join(process.cwd(), 'venv', 'bin', 'edge-tts');
     const result = await new Promise<{ success: boolean; error?: string }>((resolve) => {
-      const process = spawn(edgeTtsPath, [
+      // 构建命令参数
+      const args = [
         '--voice', voiceName,
         '--write-media', audioPath,
-        '--text', ssmlText
-      ]);
+        '--text', text,  // 直接传递纯文本
+        '--rate', convertRate(rate),
+        '--pitch', convertPitch(pitch),
+        '--volume', convertVolume(volume)
+      ];
+
+      const process = spawn(edgeTtsPath, args);
 
       let errorOutput = '';
 
