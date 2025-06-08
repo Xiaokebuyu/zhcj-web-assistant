@@ -43,7 +43,7 @@
 
 ```bash
 # 克隆项目
-git clone <your-repository-url>
+git clone https://github.com/Xiaokebuyu/zhcj-web-assistant.git
 cd ai-assistant
 
 # 安装依赖
@@ -76,8 +76,6 @@ NODE_ENV=development
 # 启动开发服务器 (使用 Turbopack 加速)
 npm run dev
 
-# 或使用传统模式
-npm run dev:legacy
 ```
 
 访问 `http://localhost:3000` 查看项目主页。
@@ -131,20 +129,6 @@ npm run dev:legacy
   assistant.show();    // 显示助手
   assistant.hide();    // 隐藏助手
   assistant.destroy(); // 销毁助手
-</script>
-```
-
-### 方法三：自定义容器
-
-```html
-<div id="my-assistant-container"></div>
-
-<script src="http://localhost:3000/embed.js"></script>
-<script>
-  new AIAssistant({
-    containerId: 'my-assistant-container',
-    config: { /* 配置选项 */ }
-  }).init();
 </script>
 ```
 
@@ -416,42 +400,7 @@ server {
         add_header Cache-Control "public, immutable";
     }
 }
-```
 
-3. **Docker 部署**
-
-```dockerfile
-FROM node:18-alpine
-
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-
-COPY . .
-RUN npm run build
-
-# 安装 Python 和 edge-tts
-RUN apk add --no-cache python3 py3-pip
-RUN python3 -m venv venv
-RUN ./venv/bin/pip install edge-tts
-
-EXPOSE 3000
-CMD ["npm", "start"]
-```
-
-### CDN 部署
-
-```html
-<!-- 生产环境使用 CDN -->
-<script src="https://cdn.your-domain.com/embed.js"></script>
-<script>
-  window.initAIAssistant({
-    config: {
-      baseUrl: 'https://api.your-domain.com'
-    }
-  });
-</script>
-```
 
 ## 🔧 故障排除
 
