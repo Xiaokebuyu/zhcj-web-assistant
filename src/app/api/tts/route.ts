@@ -22,6 +22,44 @@ const CHINESE_VOICES = {
   'xiaoxuan': 'zh-CN-XiaoxuanNeural',     // 知性女声
 };
 
+// 清理markdown格式，只保留纯文本内容
+function cleanMarkdown(text: string): string {
+  return text
+    // 移除代码块 ```code```
+    .replace(/```[\s\S]*?```/g, '')
+    // 移除行内代码 `code`
+    .replace(/`([^`]+)`/g, '$1')
+    // 移除粗体 **text** 或 __text__
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    // 移除斜体 *text* 或 _text_
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/_([^_]+)_/g, '$1')
+    // 移除删除线 ~~text~~
+    .replace(/~~([^~]+)~~/g, '$1')
+    // 移除标题标记 # ## ### 等
+    .replace(/^#{1,6}\s+/gm, '')
+    // 移除引用标记 >
+    .replace(/^>\s*/gm, '')
+    // 移除列表标记 - * +
+    .replace(/^[\s]*[-*+]\s+/gm, '')
+    // 移除有序列表标记 1. 2. 等
+    .replace(/^[\s]*\d+\.\s+/gm, '')
+    // 移除链接 [text](url) 只保留text
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    // 移除图片 ![alt](url)
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
+    // 移除HTML标签
+    .replace(/<[^>]+>/g, '')
+    // 移除水平分割线 --- 或 ***
+    .replace(/^[-*]{3,}$/gm, '')
+    // 移除表格分隔符 |
+    .replace(/\|/g, ' ')
+    // 清理多余的空白字符
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { text, voice = 'xiaoxiao', rate = '0%', pitch = '0%', volume = '0%' }: TTSRequest = await request.json();
@@ -41,6 +79,9 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+
+    // 清理markdown格式，只保留纯文本
+    const cleanText = cleanMarkdown(text);
 
     // 获取语音名称
     const voiceName = CHINESE_VOICES[voice as keyof typeof CHINESE_VOICES] || CHINESE_VOICES.xiaoxiao;
@@ -89,7 +130,7 @@ export async function POST(request: NextRequest) {
       const args = [
         '--voice', voiceName,
         '--write-media', audioPath,
-        '--text', text,  // 直接传递纯文本
+        '--text', cleanText,  // 传递清理后的纯文本
         '--rate', convertRate(rate),
         '--pitch', convertPitch(pitch),
         '--volume', convertVolume(volume)
