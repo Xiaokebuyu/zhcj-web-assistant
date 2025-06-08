@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import FloatingAssistant from '@/components/FloatingAssistant';
 import { AssistantConfig } from '@/types';
 
-export default function EmbedPage() {
+function EmbedContent() {
   const searchParams = useSearchParams();
   const [config, setConfig] = useState<AssistantConfig>({});
   const [isVisible, setIsVisible] = useState(true);
@@ -78,7 +78,7 @@ export default function EmbedPage() {
   };
 
   // 向父页面发送消息
-  const postMessageToParent = (type: string, data: any = {}) => {
+  const postMessageToParent = (type: string, data: Record<string, unknown> = {}) => {
     if (window.parent && window.parent !== window) {
       window.parent.postMessage(
         { type: `ai-assistant-${type}`, data },
@@ -128,5 +128,13 @@ export default function EmbedPage() {
         onError={handleError}
       />
     </div>
+  );
+}
+
+export default function EmbedPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <EmbedContent />
+    </Suspense>
   );
 } 

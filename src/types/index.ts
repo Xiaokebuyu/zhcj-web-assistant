@@ -90,6 +90,7 @@ export interface EmbedOptions {
 // 消息事件类型
 export interface MessageEvent {
   type: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data: any;
   origin?: string;
 }
@@ -122,7 +123,9 @@ export interface AssistantState {
 // 全局窗口扩展（用于嵌入式SDK）
 declare global {
   interface Window {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     AIAssistant?: any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     initAIAssistant?: (options: EmbedOptions) => any;
   }
 }
@@ -134,4 +137,40 @@ export interface VoiceState {
   isListening: boolean;
   isPlaying: boolean;
   isLoading: boolean;
+  currentTranscript: string;
+  finalTranscript: string;
+  isStreamingActive: boolean;
+  confidence: number;
+}
+
+// 语音识别配置接口
+export interface STTConfig {
+  language: string;
+  continuous: boolean;
+  interimResults: boolean;
+  maxAlternatives: number;
+  grammars?: string[];
+}
+
+// 流式识别事件接口
+export interface StreamingSTTEvent {
+  type: 'start' | 'result' | 'end' | 'error' | 'no-speech';
+  transcript?: string;
+  isFinal?: boolean;
+  confidence?: number;
+  error?: string;
+}
+
+// Web Speech API类型扩展
+declare global {
+  interface Window {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    SpeechRecognition?: any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    webkitSpeechRecognition?: any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    AIAssistant?: any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    initAIAssistant?: (options: EmbedOptions) => any;
+  }
 } 

@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { MessageCircle, X, Minus, Send, Mic, MicOff, Volume2, VolumeX, Settings } from 'lucide-react';
-import { ChatMessage, AssistantConfig, VoiceState, VoiceSettings } from '@/types';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { MessageCircle, X, Minus, Send, Mic, Volume2, VolumeX, Settings, Square } from 'lucide-react';
+import { ChatMessage, AssistantConfig, VoiceState, VoiceSettings, STTConfig, StreamingSTTEvent } from '@/types';
+import { StreamingSpeechRecognition } from '@/utils/streamingSpeechRecognition';
 
 interface FloatingAssistantProps {
   config?: AssistantConfig;
@@ -28,7 +29,11 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   const [voiceState, setVoiceState] = useState<VoiceState>({
     isListening: false,
     isPlaying: false,
-    isLoading: false
+    isLoading: false,
+    currentTranscript: '',
+    finalTranscript: '',
+    isStreamingActive: false,
+    confidence: 0
   });
   
   // 语音设置
@@ -43,18 +48,63 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  
+  // 语音识别实例
+  const sttInstance = useRef<StreamingSpeechRecognition | null>(null);
+  const transcriptTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const {
     position = 'bottom-right',
-    theme = 'light',
-    enableVoice = true,
-    maxMessages = 5
+    enableVoice = true
   } = config;
+
+  // STT配置
+  const sttConfig: STTConfig = useMemo(() => ({
+    language: 'zh-CN',
+    continuous: true,
+    interimResults: true,
+    maxAlternatives: 1
+  }), []);
 
   // 自动滚动到最新消息
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // 停止语音识别 - 会发送当前文本
+  const stopListening = useCallback(() => {
+    // 清除超时
+    if (transcriptTimeoutRef.current) {
+      clearTimeout(transcriptTimeoutRef.current);
+      transcriptTimeoutRef.current = null;
+    }
+    
+    if (sttInstance.current) {
+      sttInstance.current.stop();
+    }
+  }, []);
+
+  // 强制停止语音识别 - 不发送文本，直接取消
+  const abortListening = useCallback(() => {
+    // 清除超时
+    if (transcriptTimeoutRef.current) {
+      clearTimeout(transcriptTimeoutRef.current);
+      transcriptTimeoutRef.current = null;
+    }
+    
+    if (sttInstance.current) {
+      sttInstance.current.abort();
+    }
+    
+    setVoiceState(prev => ({
+      ...prev,
+      isListening: false,
+      isStreamingActive: false,
+      isLoading: false,
+      currentTranscript: '',
+      finalTranscript: ''
+    }));
+  }, []);
 
   // 生成语音
   const generateSpeech = useCallback(async (text: string): Promise<string | null> => {
@@ -101,7 +151,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   }, []);
 
   // 发送消息
-  const sendMessage = async (content: string, isVoice = false) => {
+  const sendMessage = useCallback(async (content: string, isVoice = false) => {
     if (!content.trim() || isLoading) return;
 
     const userMessage: ChatMessage = {
@@ -170,30 +220,167 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [isLoading, messages, enableVoice, voiceSettings, generateSpeech, playAudio, onError]);
 
-  // 语音转文本
-  const startListening = async () => {
-    if (!enableVoice) return;
-    
-    setVoiceState(prev => ({ ...prev, isListening: true, isLoading: true }));
-    
-    try {
-      // 这里后续集成STT API
-      // 暂时模拟语音输入
-      setTimeout(() => {
-        setVoiceState(prev => ({ ...prev, isListening: false, isLoading: false }));
-        sendMessage("这是语音输入的模拟文本", true);
-      }, 2000);
-    } catch (error) {
-      console.error('语音识别失败:', error);
-      setVoiceState(prev => ({ ...prev, isListening: false, isLoading: false }));
-      
-      if (onError) {
-        onError(error instanceof Error ? error : new Error('语音识别失败'));
-      }
+  // 处理STT事件
+  const handleSTTEvent = useCallback((event: StreamingSTTEvent) => {
+    switch (event.type) {
+      case 'start':
+        // 清除任何现有的超时
+        if (transcriptTimeoutRef.current) {
+          clearTimeout(transcriptTimeoutRef.current);
+          transcriptTimeoutRef.current = null;
+        }
+        
+        setVoiceState(prev => ({
+          ...prev,
+          isListening: true,
+          isLoading: false,
+          isStreamingActive: true,
+          currentTranscript: '',
+          finalTranscript: ''
+        }));
+        break;
+
+      case 'result':
+        if (event.isFinal && event.transcript) {
+          // 最终结果 - 清除超时并发送消息
+          if (transcriptTimeoutRef.current) {
+            clearTimeout(transcriptTimeoutRef.current);
+            transcriptTimeoutRef.current = null;
+          }
+          
+          const finalText = event.transcript.trim();
+          if (finalText) {
+            sendMessage(finalText, true);
+            setVoiceState(prev => ({
+              ...prev,
+              finalTranscript: finalText,
+              currentTranscript: '',
+              confidence: event.confidence || 0
+            }));
+          }
+        } else if (event.transcript) {
+          // 实时结果 - 更新显示
+          setVoiceState(prev => ({
+            ...prev,
+            currentTranscript: event.transcript || '',
+            confidence: event.confidence || 0
+          }));
+
+          // 清除之前的超时
+          if (transcriptTimeoutRef.current) {
+            clearTimeout(transcriptTimeoutRef.current);
+          }
+
+          // 设置超时自动发送（防止用户忘记停止） - 延长到8秒
+          transcriptTimeoutRef.current = setTimeout(() => {
+            const currentText = event.transcript?.trim();
+            if (currentText) {
+              sendMessage(currentText, true);
+              stopListening();
+            }
+          }, 8000); // 延长到8秒无新输入自动发送
+        }
+        break;
+
+      case 'end':
+        // 清除超时
+        if (transcriptTimeoutRef.current) {
+          clearTimeout(transcriptTimeoutRef.current);
+          transcriptTimeoutRef.current = null;
+        }
+        
+        setVoiceState(prev => {
+          // 如果没有final结果且有临时文本，才发送消息（避免重复发送）
+          const hasCurrentText = prev.currentTranscript.trim();
+          const hasFinalText = prev.finalTranscript.trim();
+          
+          if (hasCurrentText && !hasFinalText) {
+            // 只有在没有final结果但有临时文本的情况下才发送
+            sendMessage(prev.currentTranscript.trim(), true);
+          }
+          
+          return {
+            ...prev,
+            isListening: false,
+            isStreamingActive: false,
+            isLoading: false,
+            currentTranscript: hasCurrentText && !hasFinalText ? '' : prev.currentTranscript
+          };
+        });
+        break;
+
+      case 'error':
+        // 清除超时
+        if (transcriptTimeoutRef.current) {
+          clearTimeout(transcriptTimeoutRef.current);
+          transcriptTimeoutRef.current = null;
+        }
+        
+        setVoiceState(prev => ({
+          ...prev,
+          isListening: false,
+          isStreamingActive: false,
+          isLoading: false,
+          currentTranscript: '',
+          finalTranscript: ''
+        }));
+        
+        if (onError) {
+          onError(new Error(event.error || '语音识别失败'));
+        }
+        break;
+
+      case 'no-speech':
+        // 未检测到语音，可以选择重新开始或提示用户
+        console.log('未检测到语音');
+        break;
     }
-  };
+  }, [sendMessage, onError, stopListening]);
+
+  // 初始化语音识别
+  useEffect(() => {
+    if (enableVoice && !sttInstance.current) {
+      sttInstance.current = new StreamingSpeechRecognition(
+        sttConfig,
+        handleSTTEvent
+      );
+    }
+
+    return () => {
+      if (sttInstance.current) {
+        sttInstance.current.stop();
+      }
+    };
+  }, [enableVoice, handleSTTEvent, sttConfig]);
+
+  // 开始流式语音识别
+  const startListening = useCallback(async () => {
+    if (!enableVoice || !sttInstance.current) {
+      if (onError) {
+        onError(new Error('语音功能未启用或不可用'));
+      }
+      return;
+    }
+
+    // 检查麦克风权限
+    try {
+      await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      if (onError) {
+        onError(new Error('无法访问麦克风，请检查权限设置'));
+      }
+      return;
+    }
+
+    setVoiceState(prev => ({ ...prev, isLoading: true }));
+    
+    const success = sttInstance.current.start();
+    if (!success) {
+      setVoiceState(prev => ({ ...prev, isLoading: false }));
+    }
+  }, [enableVoice, onError]);
 
   // 重新生成语音
   const regenerateSpeech = async (messageId: string, text: string) => {
@@ -210,6 +397,57 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     sendMessage(inputValue);
+  };
+
+  // 渲染实时转录显示组件
+  const renderTranscriptDisplay = () => {
+    if (!voiceState.isStreamingActive && !voiceState.currentTranscript) {
+      return null;
+    }
+
+    return (
+      <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+        <div className="flex items-center gap-2 mb-2">
+          <div className="flex items-center gap-1">
+            <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+            <span className="text-sm text-blue-600 font-medium">正在识别...</span>
+          </div>
+          {voiceState.confidence > 0 && (
+            <div className="text-xs text-gray-500">
+              置信度: {Math.round(voiceState.confidence * 100)}%
+            </div>
+          )}
+        </div>
+        
+        <div className="text-gray-800 min-h-[20px]">
+          {voiceState.currentTranscript || (
+            <span className="text-gray-400 italic">请开始说话...</span>
+          )}
+        </div>
+        
+        <div className="flex gap-2 mt-3">
+          <button
+            onClick={() => {
+              // 手动发送当前文本
+              const currentText = voiceState.currentTranscript.trim();
+              if (currentText) {
+                sendMessage(currentText, true);
+              }
+              stopListening();
+            }}
+            className="px-3 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
+          >
+            完成
+          </button>
+          <button
+            onClick={abortListening}
+            className="px-3 py-1 text-xs bg-gray-500 text-white rounded hover:bg-gray-600 transition-colors"
+          >
+            取消
+          </button>
+        </div>
+      </div>
+    );
   };
 
   // 位置样式
@@ -351,6 +589,8 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
         {!isMinimized && (
           <>
             <div className="flex-1 overflow-y-auto p-4 h-80 space-y-4 bg-gradient-to-b from-white to-gray-50/50">
+              {/* 实时转录显示区域 */}
+              {renderTranscriptDisplay()}
               {messages.length === 0 ? (
                 <div className="text-center py-8">
                   <div className="w-16 h-16 bg-gradient-to-r from-orange-100 to-amber-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
@@ -456,7 +696,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                     onChange={(e) => setInputValue(e.target.value)}
                     placeholder="输入消息..."
                     className="w-full px-4 py-3 border border-gray-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-300 transition-all duration-200 bg-gray-50/50 hover:bg-white"
-                    disabled={isLoading}
+                    disabled={isLoading || voiceState.isListening}
                   />
                 </div>
                 
@@ -464,22 +704,28 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                   {enableVoice && (
                     <button
                       type="button"
-                      onClick={startListening}
-                      disabled={voiceState.isListening || voiceState.isLoading}
+                      onClick={voiceState.isListening ? stopListening : startListening}
+                      disabled={isLoading && !voiceState.isListening}
                       className={`p-3 rounded-2xl transition-all duration-200 ${
-                        voiceState.isListening 
-                          ? 'bg-red-500 text-white shadow-lg shadow-red-200' 
-                          : 'bg-gray-100 hover:bg-orange-100 text-gray-600 hover:text-orange-600'
+                        voiceState.isListening
+                          ? 'bg-red-500 hover:bg-red-600 text-white animate-pulse'
+                          : 'bg-blue-500 hover:bg-blue-600 text-white'
+                      } ${
+                        (isLoading && !voiceState.isListening) ? 'opacity-50 cursor-not-allowed' : ''
                       }`}
                       aria-label="语音输入"
                     >
-                      {voiceState.isListening ? <MicOff size={18} strokeWidth={2} /> : <Mic size={18} strokeWidth={2} />}
+                      {voiceState.isListening ? (
+                        <Square size={18} strokeWidth={2} />
+                      ) : (
+                        <Mic size={18} strokeWidth={2} />
+                      )}
                     </button>
                   )}
                   
                   <button
                     type="submit"
-                    disabled={!inputValue.trim() || isLoading}
+                    disabled={!inputValue.trim() || isLoading || voiceState.isListening}
                     className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 disabled:from-gray-300 disabled:to-gray-400 text-white p-3 rounded-2xl transition-all duration-200 disabled:cursor-not-allowed shadow-lg shadow-orange-200/50 hover:shadow-orange-300/50"
                     aria-label="发送消息"
                   >
