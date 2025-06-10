@@ -3,275 +3,341 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 助手集成示例</title>
+    <title>AI助手集成示例 - 调试版本</title>
+    <meta name="description" content="这是一个用于测试AI助手页面上下文功能的示例页面">
     <style>
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             line-height: 1.6;
             margin: 0;
-            padding: 40px;
+            padding: 20px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
-            color: white;
         }
-        
         .container {
-            max-width: 800px;
+            max-width: 1200px;
             margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(45deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            padding: 40px;
             text-align: center;
         }
-        
-        h1 {
-            font-size: 3rem;
-            margin-bottom: 1rem;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        .header h1 {
+            margin: 0 0 10px 0;
+            font-size: 2.5rem;
+            font-weight: 300;
         }
-        
-        p {
-            font-size: 1.2rem;
-            margin-bottom: 2rem;
-            opacity: 0.9;
+        .content {
+            padding: 40px;
         }
-        
-        .demo-card {
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
-            border-radius: 20px;
-            padding: 2rem;
-            margin: 2rem 0;
-            border: 1px solid rgba(255, 255, 255, 0.2);
+        .section {
+            margin-bottom: 40px;
         }
-        
-        .code-block {
-            background: rgba(0, 0, 0, 0.3);
+        .section h2 {
+            color: #333;
+            border-bottom: 3px solid #f093fb;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 30px;
+            margin: 30px 0;
+        }
+        .feature-card {
+            background: #f8f9fa;
+            padding: 25px;
             border-radius: 10px;
-            padding: 1.5rem;
-            margin: 1rem 0;
-            font-family: 'Monaco', 'Menlo', monospace;
-            font-size: 0.9rem;
-            text-align: left;
-            overflow-x: auto;
+            border-left: 4px solid #667eea;
         }
-        
-        .notice {
-            background: rgba(255, 193, 7, 0.2);
-            border: 1px solid rgba(255, 193, 7, 0.5);
+        .feature-card h3 {
+            color: #667eea;
+            margin-top: 0;
+        }
+        .debug-panel {
+            background: #2d3748;
+            color: #e2e8f0;
+            padding: 20px;
             border-radius: 10px;
-            padding: 1rem;
-            margin: 1rem 0;
-            color: #fff3cd;
+            margin: 20px 0;
+            font-family: 'Courier New', monospace;
         }
-        
-        .success {
-            background: rgba(40, 167, 69, 0.2);
-            border: 1px solid rgba(40, 167, 69, 0.5);
-            color: #d4edda;
+        .debug-panel h3 {
+            color: #4fd1c7;
+            margin-top: 0;
         }
-        
-        .feature-list {
-            text-align: left;
-            display: inline-block;
+        .debug-info {
+            background: #1a202c;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            border-left: 3px solid #4fd1c7;
         }
-        
-        .feature-list li {
-            margin: 0.5rem 0;
-            padding-left: 1rem;
-        }
-        
-        .button {
-            display: inline-block;
-            background: linear-gradient(45deg, #ff6b6b, #ee5a24);
+        .btn {
+            background: #667eea;
             color: white;
-            padding: 12px 24px;
-            border-radius: 25px;
-            text-decoration: none;
-            font-weight: bold;
-            margin: 10px;
-            transition: transform 0.2s;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
         }
-        
-        .button:hover {
-            transform: translateY(-2px);
+        .btn:hover {
+            background: #5a67d8;
+        }
+        .btn.success {
+            background: #48bb78;
+        }
+        .btn.warning {
+            background: #ed8936;
+        }
+        .btn.error {
+            background: #f56565;
+        }
+        .status {
+            padding: 5px 10px;
+            border-radius: 3px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        .status.ready {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+        .status.loading {
+            background: #fbb6ce;
+            color: #97266d;
+        }
+        .status.error {
+            background: #feb2b2;
+            color: #742a2a;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🤖 AI 助手集成示例</h1>
-        <p>这是一个展示如何在网站中集成 AI 悬浮框助手的示例页面</p>
-        
-        <div class="demo-card">
-            <h2>✨ 功能特性</h2>
-            <ul class="feature-list">
-                <li>🎨 Anthropic 风格的现代化设计</li>
-                <li>💬 智能 AI 对话功能</li>
-                <li>🎙️ 语音输入支持（开发中）</li>
-                <li>📱 响应式设计，完美适配移动端</li>
-                <li>⚡ 轻量级，加载速度快</li>
-                <li>🔧 易于配置和自定义</li>
-            </ul>
+        <div class="header">
+            <h1>AI助手集成示例</h1>
+            <p>这是一个用于测试AI助手页面上下文功能的演示页面</p>
         </div>
-        
-        <div class="demo-card">
-            <h2>📋 集成代码</h2>
-            <p>在您的网站中添加以下代码即可集成 AI 助手：</p>
-            
-            <div class="code-block">
-&lt;!-- 加载 AI 助手 SDK --&gt;
-&lt;script src="http://localhost:3000/embed.js"&gt;&lt;/script&gt;
 
-&lt;!-- 初始化助手 --&gt;
-&lt;script&gt;
-  window.initAIAssistant({
-    config: {
-      position: 'bottom-right',  // 位置
-      theme: 'light',           // 主题
-      enableVoice: true         // 启用语音
-    },
-    onReady: () =&gt; {
-      console.log('AI 助手已就绪！');
-    },
-    onError: (error) =&gt; {
-      console.error('助手加载失败:', error);
-    }
-  });
-&lt;/script&gt;
+        <div class="content">
+            <div class="section">
+                <h2>项目介绍</h2>
+                <p>这是一个智能AI助手项目，具有强大的页面上下文感知能力。助手能够理解当前页面的内容，并基于页面信息提供相关的帮助和回答。</p>
+                
+                <div class="features">
+                    <div class="feature-card">
+                        <h3>智能对话</h3>
+                        <p>支持自然语言交互，能够理解复杂的用户意图并提供准确的回答。</p>
+                    </div>
+                    <div class="feature-card">
+                        <h3>页面感知</h3>
+                        <p>能够自动分析当前页面内容，包括标题、主要段落、链接等关键信息。</p>
+                    </div>
+                    <div class="feature-card">
+                        <h3>实时工具调用</h3>
+                        <p>集成多种实用工具，如天气查询、信息搜索等，提供实时准确的信息。</p>
+                    </div>
+                    <div class="feature-card">
+                        <h3>语音交互</h3>
+                        <p>支持语音输入和语音播放，提供更自然的交互体验。</p>
+                    </div>
+                </div>
             </div>
-        </div>
-        
-        <div class="demo-card">
-            <h2>⚙️ 配置选项</h2>
-            <div class="code-block">
-// 支持的配置选项
-{
-  baseUrl: 'http://localhost:3000',     // 服务器地址
-  position: 'bottom-right',             // 位置选项
-  theme: 'light',                       // 主题: light/dark/auto
-  enableVoice: true,                    // 是否启用语音
-  maxMessages: 50                       // 最大消息数
-}
 
-// 位置选项
-- 'bottom-right'  右下角（默认）
-- 'bottom-left'   左下角
-- 'top-right'     右上角
-- 'top-left'      左上角
+            <div class="section">
+                <h2>功能特性</h2>
+                <ul>
+                    <li><strong>多模态交互：</strong>支持文字、语音多种输入方式</li>
+                    <li><strong>上下文理解：</strong>能够记住对话历史，提供连贯的交互体验</li>
+                    <li><strong>页面内容分析：</strong>自动提取页面关键信息，理解页面主题</li>
+                    <li><strong>智能推荐：</strong>基于页面内容推荐相关问题和话题</li>
+                    <li><strong>实时响应：</strong>快速响应用户查询，提供及时的帮助</li>
+                </ul>
             </div>
-        </div>
-        
-        <div class="notice">
-            <strong>💡 提示：</strong> 
-            你现在应该能在页面右下角看到一个橙色的悬浮按钮，点击它就可以开始与 AI 助手对话了！
-        </div>
-        
-        <div class="notice success">
-            <strong>✅ 成功：</strong> 
-            AI 助手已成功集成到此页面中。试试点击右下角的按钮开始对话吧！
-        </div>
-        
-        <div style="margin-top: 3rem;">
-            <a href="http://localhost:3000" class="button">返回主页</a>
-            <a href="http://localhost:3000/embed" class="button">查看嵌入页面</a>
-        </div>
-        
-        <div style="margin-top: 2rem; opacity: 0.7; font-size: 0.9rem;">
-            <p>该示例展示了如何在任何网站中集成 AI 助手</p>
-            <p>Made with ❤️ by AI Assistant Team</p>
+
+            <div class="debug-panel">
+                <h3>🔧 调试信息面板</h3>
+                <div class="debug-info">
+                    <div>AI助手状态: <span id="assistantStatus" class="status loading">加载中</span></div>
+                    <div>页面上下文: <span id="contextStatus" class="status loading">检测中</span></div>
+                    <div>最后更新: <span id="lastUpdate">未更新</span></div>
+                </div>
+                
+                <div style="margin: 15px 0;">
+                    <button class="btn" onclick="testContextRequest()">测试上下文请求</button>
+                    <button class="btn" onclick="showCurrentContext()">显示当前上下文</button>
+                    <button class="btn warning" onclick="clearLogs()">清空日志</button>
+                    <button class="btn success" onclick="askPageQuestion()">问页面相关问题</button>
+                </div>
+
+                <div id="debugLogs" style="max-height: 300px; overflow-y: auto; background: #1a202c; padding: 10px; border-radius: 5px; margin-top: 10px;">
+                    <div style="color: #4fd1c7;">调试日志将显示在这里...</div>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>测试用例</h2>
+                <p>你可以尝试问AI助手以下问题来测试页面上下文功能：</p>
+                <ul>
+                    <li>"这个页面讲的是什么？"</li>
+                    <li>"总结一下当前页面的内容"</li>
+                    <li>"这个页面有哪些功能特性？"</li>
+                    <li>"页面的主要内容是什么？"</li>
+                </ul>
+            </div>
         </div>
     </div>
 
-    <!-- AI 助手集成代码 - 开始 -->
-    <script src="http://localhost:3000/embed.js"></script>
+    <!-- AI助手脚本 -->
+    <script src="embed.js"></script>
     <script>
-        window.initAIAssistant({
-          config: {
-            position: 'bottom-right',
-            theme: 'light',
-            enableVoice: true,
-            // 🎯 新增：页面感知配置
-            enablePageContext: true,      // 启用页面感知
-            contextDepth: 'medium',       // 提取深度
-            autoUpdateContext: true       // 自动更新上下文
-          }
-        });
-      </script>
-    <script>
-        // 等待页面加载完成后初始化 AI 助手
-        document.addEventListener('DOMContentLoaded', function() {
-            window.initAIAssistant({
+        let assistant = null;
+        let logCount = 0;
+
+        // 日志函数
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const debugLogs = document.getElementById('debugLogs');
+            const colors = {
+                info: '#4fd1c7',
+                success: '#48bb78',
+                warning: '#ed8936',
+                error: '#f56565'
+            };
+            
+            logCount++;
+            debugLogs.innerHTML += `<div style="color: ${colors[type]}; margin: 2px 0;">[${timestamp}] ${message}</div>`;
+            debugLogs.scrollTop = debugLogs.scrollHeight;
+            
+            // 限制日志数量
+            if (logCount > 100) {
+                const lines = debugLogs.querySelectorAll('div');
+                lines[0].remove();
+                logCount--;
+            }
+        }
+
+        // 初始化AI助手
+        function initializeAssistant() {
+            log('开始初始化AI助手...', 'info');
+            
+            assistant = new AIAssistant({
                 config: {
+                    baseUrl: 'http://localhost:3000',
                     position: 'bottom-right',
                     theme: 'light',
                     enableVoice: true,
-                    baseUrl: 'http://localhost:3000'
+                    enablePageContext: true,
+                    contextDepth: 'medium',
+                    autoUpdateContext: true,
+                    contextUpdateInterval: 5000
                 },
                 onReady: () => {
-                    console.log('🎉 AI 助手已成功加载！');
-                    
-                    // 可选：显示欢迎通知
-                    setTimeout(() => {
-                        const notice = document.createElement('div');
-                        notice.innerHTML = `
-                            <div style="
-                                position: fixed;
-                                bottom: 120px;
-                                right: 20px;
-                                background: linear-gradient(45deg, #ff6b6b, #ee5a24);
-                                color: white;
-                                padding: 12px 20px;
-                                border-radius: 15px;
-                                font-size: 14px;
-                                box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-                                z-index: 1000;
-                                animation: slideIn 0.3s ease-out;
-                            ">
-                                👋 AI 助手已就绪，点击开始对话！
-                            </div>
-                            <style>
-                                @keyframes slideIn {
-                                    from { transform: translateX(100%); opacity: 0; }
-                                    to { transform: translateX(0); opacity: 1; }
-                                }
-                            </style>
-                        `;
-                        document.body.appendChild(notice);
-                        
-                        // 3秒后自动隐藏通知
-                        setTimeout(() => {
-                            notice.style.animation = 'slideIn 0.3s ease-out reverse';
-                            setTimeout(() => notice.remove(), 300);
-                        }, 3000);
-                    }, 1000);
+                    log('✅ AI助手初始化成功', 'success');
+                    document.getElementById('assistantStatus').textContent = '已就绪';
+                    document.getElementById('assistantStatus').className = 'status ready';
                 },
                 onError: (error) => {
-                    console.error('❌ AI 助手加载失败:', error);
-                    
-                    // 显示错误通知
-                    const errorNotice = document.createElement('div');
-                    errorNotice.innerHTML = `
-                        <div style="
-                            position: fixed;
-                            bottom: 20px;
-                            right: 20px;
-                            background: #dc3545;
-                            color: white;
-                            padding: 12px 20px;
-                            border-radius: 15px;
-                            font-size: 14px;
-                            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-                            z-index: 1000;
-                        ">
-                            ⚠️ AI 助手加载失败，请刷新页面重试
-                        </div>
-                    `;
-                    document.body.appendChild(errorNotice);
-                    
-                    setTimeout(() => errorNotice.remove(), 5000);
+                    log(`❌ AI助手错误: ${error.message}`, 'error');
+                    document.getElementById('assistantStatus').textContent = '错误';
+                    document.getElementById('assistantStatus').className = 'status error';
                 }
             });
+
+            assistant.init();
+        }
+
+        // 测试上下文请求
+        function testContextRequest() {
+            log('🔄 手动请求页面上下文更新', 'info');
+            if (assistant) {
+                assistant.refreshContext();
+                document.getElementById('contextStatus').textContent = '更新中';
+                document.getElementById('contextStatus').className = 'status loading';
+                
+                setTimeout(() => {
+                    const context = assistant.getPageContext();
+                    if (context) {
+                        log(`✅ 页面上下文获取成功: ${context.basic?.title}`, 'success');
+                        document.getElementById('contextStatus').textContent = '已获取';
+                        document.getElementById('contextStatus').className = 'status ready';
+                        document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+                    } else {
+                        log('⚠️ 未能获取页面上下文', 'warning');
+                        document.getElementById('contextStatus').textContent = '失败';
+                        document.getElementById('contextStatus').className = 'status error';
+                    }
+                }, 1000);
+            }
+        }
+
+        // 显示当前上下文
+        function showCurrentContext() {
+            if (assistant) {
+                const context = assistant.getPageContext();
+                if (context) {
+                    log('📄 当前页面上下文:', 'info');
+                    log(`- 标题: ${context.basic?.title}`, 'info');
+                    log(`- URL: ${context.basic?.url}`, 'info');
+                    log(`- 类型: ${context.pageType}`, 'info');
+                    log(`- 摘要: ${context.mainContent?.summary?.substring(0, 100)}...`, 'info');
+                } else {
+                    log('❌ 当前没有页面上下文数据', 'error');
+                }
+            }
+        }
+
+        // 清空日志
+        function clearLogs() {
+            document.getElementById('debugLogs').innerHTML = '<div style="color: #4fd1c7;">调试日志已清空...</div>';
+            logCount = 0;
+        }
+
+        // 问页面相关问题
+        function askPageQuestion() {
+            log('🤖 模拟用户询问页面相关问题', 'info');
+            alert('请点击AI助手图标，然后问："这个页面讲的是什么？"');
+        }
+
+        // 监听消息以获取调试信息
+        window.addEventListener('message', (event) => {
+            const { type, data } = event.data;
+            
+            // 只记录AI助手相关消息
+            if (type && type.startsWith('ai-assistant-')) {
+                log(`📨 收到消息: ${type}`, 'info');
+                if (data.context) {
+                    log(`📄 包含页面上下文: ${data.context.basic?.title}`, 'success');
+                }
+            }
+        });
+
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            log('📄 页面加载完成，开始初始化AI助手', 'info');
+            initializeAssistant();
+            
+            // 定期检查上下文状态
+            setInterval(() => {
+                if (assistant) {
+                    const context = assistant.getPageContext();
+                    if (context) {
+                        document.getElementById('contextStatus').textContent = '已准备';
+                        document.getElementById('contextStatus').className = 'status ready';
+                    }
+                }
+            }, 2000);
         });
     </script>
-    <!-- AI 助手集成代码 - 结束 -->
-
 </body>
 </html> 

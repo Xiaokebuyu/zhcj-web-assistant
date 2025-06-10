@@ -410,11 +410,16 @@
       if (!this.pageExtractor) return;
 
       try {
+        console.log('开始提取页面上下文...');
         this.currentContext = this.pageExtractor.extractPageContent(this.config.contextDepth);
+        console.log('页面上下文提取完成:', this.currentContext);
         
         // 如果助手已加载，发送更新的上下文
         if (this.isLoaded && this.iframe) {
+          console.log('发送上下文到iframe...');
           this.postMessage('updateContext', { context: this.currentContext });
+        } else {
+          console.log('iframe未准备好，上下文将在初始化时发送');
         }
       } catch (error) {
         console.warn('页面上下文更新失败:', error);
@@ -566,6 +571,7 @@
         }
 
         const { type, data } = event.data;
+        console.log('父页面收到消息:', type, data); // 添加调试日志
 
         switch (type) {
           case 'ai-assistant-ready':
@@ -583,8 +589,9 @@
             }
             break;
 
-          case 'ai-assistant-requestContext':
+          case 'ai-assistant-requestPageContext':
             // 助手请求页面上下文
+            console.log('收到上下文请求，开始更新页面上下文...');
             this.updatePageContext();
             break;
           

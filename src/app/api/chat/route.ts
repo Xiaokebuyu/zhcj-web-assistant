@@ -1,5 +1,6 @@
 // src/app/api/chat/route.ts
 import { NextRequest, NextResponse } from 'next/server';
+import { PageContext } from '@/types';
 
 interface ChatMessage {
   role: 'user' | 'assistant' | 'system' | 'tool';
@@ -23,52 +24,8 @@ interface ChatRequest {
   temperature?: number;
   max_tokens?: number;
   tools?: ToolDefinition[];
-  // 新增：页面上下文
-  pageContext?: {
-    basic: {
-      url: string;
-      title: string;
-      domain: string;
-      pathname: string;
-      timestamp: string;
-    };
-    meta: Record<string, string>;
-    headings: Array<{
-      level: number;
-      text: string;
-      id?: string;
-    }>;
-    mainContent: {
-      summary: string;
-      sections?: Array<{
-        index: number;
-        tag: string;
-        text: string;
-        className?: string;
-      }>;
-      keyElements?: Array<{
-        type: string;
-        text?: string;
-        href?: string;
-        alt?: string;
-        src?: string;
-        items?: string[];
-      }>;
-      fullText?: string;
-    };
-    navigation: {
-      breadcrumbs?: Array<{
-        text: string;
-        href: string;
-      }>;
-      mainNavigation?: Array<{
-        text: string;
-        href: string;
-        active: boolean;
-      }>;
-    };
-    pageType: string;
-  };
+  // 页面上下文
+  pageContext?: PageContext;
 }
 
 // 页面上下文处理器
@@ -77,46 +34,55 @@ class PageContextProcessor {
   static generateContextSystemMessage(pageContext: ChatRequest['pageContext']): string {
     if (!pageContext) return '';
 
-    const { basic, headings, mainContent, pageType, navigation } = pageContext;
+    const { basic, content, metadata, structure, extracted } = pageContext;
     
     let contextMessage = `[页面上下文信息]\n`;
     
     // 基本信息
     contextMessage += `当前页面：${basic.title}\n`;
     contextMessage += `页面URL：${basic.url}\n`;
-    contextMessage += `页面类型：${this.getPageTypeDescription(pageType)}\n`;
+    contextMessage += `页面类型：${this.getPageTypeDescription(basic.type)}\n`;
+    if (basic.description) {
+      contextMessage += `页面描述：${basic.description}\n`;
+    }
     
-    // 导航信息
-    if (navigation.breadcrumbs && navigation.breadcrumbs.length > 0) {
-      contextMessage += `导航路径：${navigation.breadcrumbs.map(b => b.text).join(' > ')}\n`;
+    // 元数据信息
+    if (metadata) {
+      if (metadata.author) {
+        contextMessage += `作者：${metadata.author}\n`;
+      }
+      if (metadata.publishDate) {
+        contextMessage += `发布时间：${metadata.publishDate}\n`;
+      }
+      if (metadata.keywords && metadata.keywords.length > 0) {
+        contextMessage += `关键词：${metadata.keywords.join(', ')}\n`;
+      }
     }
     
     // 页面结构
-    if (headings && headings.length > 0) {
+    if (structure?.sections && structure.sections.length > 0) {
       contextMessage += `\n页面结构：\n`;
-      headings.slice(0, 8).forEach(heading => {
-        const indent = '  '.repeat(heading.level - 1);
-        contextMessage += `${indent}${heading.text}\n`;
+      structure.sections.slice(0, 8).forEach((section, index) => {
+        contextMessage += `- ${section}\n`;
       });
     }
     
-    // 主要内容
-    if (mainContent.summary) {
-      contextMessage += `\n页面主要内容：\n${mainContent.summary}\n`;
+    // 页面内容摘要
+    if (extracted?.summary) {
+      contextMessage += `\n页面主要内容：\n${extracted.summary}\n`;
     }
     
-    // 关键元素
-    if (mainContent.keyElements && mainContent.keyElements.length > 0) {
-      contextMessage += `\n页面关键元素：\n`;
-      mainContent.keyElements.slice(0, 10).forEach(element => {
-        if (element.type === 'link') {
-          contextMessage += `- 链接：${element.text}\n`;
-        } else if (element.type === 'image') {
-          contextMessage += `- 图片：${element.alt}\n`;
-        } else if (element.type === 'list' && element.items) {
-          contextMessage += `- 列表：${element.items.slice(0, 3).join(', ')}\n`;
-        }
+    // 关键要点
+    if (extracted?.keyPoints && extracted.keyPoints.length > 0) {
+      contextMessage += `\n页面关键要点：\n`;
+      extracted.keyPoints.slice(0, 5).forEach(point => {
+        contextMessage += `- ${point}\n`;
       });
+    }
+    
+    // 内容统计
+    if (structure?.wordCount && structure?.readingTime) {
+      contextMessage += `\n内容统计：约${structure.wordCount}字，预计阅读时间${structure.readingTime}分钟\n`;
     }
     
     contextMessage += `\n---\n`;
@@ -176,6 +142,15 @@ export async function POST(request: NextRequest) {
       tools,
       pageContext
     }: ChatRequest = await request.json();
+
+    console.log('API收到的请求数据:');
+    console.log('- messages长度:', messages?.length);
+    console.log('- 是否有pageContext:', !!pageContext);
+    if (pageContext) {
+      console.log('- 页面标题:', pageContext.basic?.title);
+      console.log('- 页面URL:', pageContext.basic?.url);
+      console.log('- 页面类型:', pageContext.basic?.type);
+    }
 
     // 验证请求数据
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
@@ -307,15 +282,15 @@ export async function POST(request: NextRequest) {
           tool_calls: message.tool_calls,
           usage: data.usage,
           requiresToolCalls: true,
-          // 添加上下文使用标记
-          contextUsed: pageContext ? PageContextProcessor.isPageRelatedQuestion(
-            processedMessages[processedMessages.length - 1]?.content || ''
-          ) : false,
-          pageInfo: pageContext ? {
-            title: pageContext.basic.title,
-            url: pageContext.basic.url,
-            type: pageContext.pageType
-          } : null
+                  // 添加上下文使用标记
+        contextUsed: pageContext ? PageContextProcessor.isPageRelatedQuestion(
+          processedMessages[processedMessages.length - 1]?.content || ''
+        ) : false,
+        pageInfo: pageContext ? {
+          title: pageContext.basic.title,
+          url: pageContext.basic.url,
+          type: pageContext.basic.type
+        } : null
         });
       }
 
@@ -334,7 +309,7 @@ export async function POST(request: NextRequest) {
         pageInfo: pageContext ? {
           title: pageContext.basic.title,
           url: pageContext.basic.url,
-          type: pageContext.pageType
+          type: pageContext.basic.type
         } : null
       });
 

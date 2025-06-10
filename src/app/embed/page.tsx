@@ -45,9 +45,11 @@ function EmbedContent() {
     const messageHandler = (event: MessageEvent) => {
       // 这里应该验证消息来源，但在开发阶段先简化
       const { type, data } = event.data;
+      console.log('Embed页面收到消息:', type, data); // 添加调试日志
 
       switch (type) {
         case 'ai-assistant-init':
+          console.log('处理初始化消息');
           if (data.config) {
             setConfig(prev => ({ ...prev, ...data.config }));
           }
@@ -65,6 +67,12 @@ function EmbedContent() {
           if (data.config) {
             setConfig(prev => ({ ...prev, ...data.config }));
           }
+          break;
+
+        case 'ai-assistant-updateContext':
+          // 转发上下文更新消息给FloatingAssistant组件
+          console.log('转发上下文更新消息');
+          window.postMessage(event.data, '*');
           break;
 
         default:

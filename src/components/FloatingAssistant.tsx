@@ -81,6 +81,133 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     maxAlternatives: 1
   }), []);
 
+  // 直接提取当前页面上下文的函数
+  const extractCurrentPageContext = useCallback(() => {
+    try {
+      console.log('开始提取当前页面上下文...');
+      
+      // 提取页面基本信息
+      const basicInfo = {
+        url: window.location.href,
+        title: document.title,
+        domain: window.location.hostname,
+        pathname: window.location.pathname,
+        timestamp: new Date().toISOString()
+      };
+
+      // 提取meta信息
+      const metaData: Record<string, string> = {};
+      const metaTags = document.querySelectorAll('meta[name], meta[property]');
+      metaTags.forEach(tag => {
+        const name = tag.getAttribute('name') || tag.getAttribute('property');
+        const content = tag.getAttribute('content');
+        if (name && content) {
+          metaData[name] = content;
+        }
+      });
+
+      // 提取标题结构
+      const headings: Array<{level: number, text: string, id?: string}> = [];
+      const headingTags = document.querySelectorAll('h1, h2, h3, h4, h5, h6');
+      headingTags.forEach(heading => {
+        headings.push({
+          level: parseInt(heading.tagName.substring(1)),
+          text: heading.textContent?.trim() || '',
+          id: heading.id || undefined
+        });
+      });
+
+      // 提取主要内容
+      const extractTextSummary = (maxLength = 500) => {
+        const excludeSelectors = [
+          'script', 'style', 'nav', 'header', 'footer',
+          '.debug-panel', '.btn', '.status'
+        ];
+
+        let text = '';
+        const walker = document.createTreeWalker(
+          document.body,
+          NodeFilter.SHOW_TEXT,
+          {
+            acceptNode: function(node) {
+              for (const selector of excludeSelectors) {
+                if (node.parentElement?.closest(selector)) {
+                  return NodeFilter.FILTER_REJECT;
+                }
+              }
+              return NodeFilter.FILTER_ACCEPT;
+            }
+          }
+        );
+
+        while (walker.nextNode()) {
+          const nodeText = walker.currentNode.textContent?.trim();
+          if (nodeText && nodeText.length > 10) {
+            text += nodeText + ' ';
+            if (text.length > maxLength) break;
+          }
+        }
+
+        return text.slice(0, maxLength).trim();
+      };
+
+      // 检测页面类型
+      const detectPageType = () => {
+        const title = document.title.toLowerCase();
+        const url = window.location.pathname.toLowerCase();
+        
+        if (url.includes('about') || title.includes('about')) return 'about';
+        if (url.includes('contact') || title.includes('contact')) return 'contact';
+        if (url.includes('blog') || title.includes('blog')) return 'blog_post';
+        if (url.includes('product') || title.includes('product')) return 'product';
+        if (url.includes('portfolio') || title.includes('portfolio')) return 'portfolio';
+        if (url === '/' || url === '/index.html') return 'homepage';
+        
+        return 'general';
+      };
+
+      const context: PageContext = {
+        basic: {
+          title: document.title,
+          url: window.location.href,
+          description: metaData.description || metaData['og:description'] || '',
+          type: detectPageType()
+        },
+        content: {
+          text: extractTextSummary(500),
+          headings: headings.map(h => h.text),
+          links: [],
+          images: []
+        },
+        metadata: {
+          author: metaData.author || metaData['article:author'] || undefined,
+          publishDate: metaData['article:published_time'] || undefined,
+          keywords: metaData.keywords ? metaData.keywords.split(',').map(k => k.trim()) : undefined,
+          language: metaData.language || document.documentElement.lang || 'zh-CN'
+        },
+        structure: {
+          wordCount: extractTextSummary(5000).split(/\s+/).length,
+          readingTime: Math.ceil(extractTextSummary(5000).split(/\s+/).length / 200), // 假设每分钟200字
+          sections: headings.map(h => h.text)
+        },
+        extracted: {
+          summary: extractTextSummary(300),
+          keyPoints: headings.slice(0, 5).map(h => h.text),
+          categories: []
+        }
+      };
+
+      console.log('页面上下文提取完成:', context);
+      setPageContext(context);
+      setContextStatus('ready');
+      setLastContextUpdate(new Date());
+      
+    } catch (error) {
+      console.error('页面上下文提取失败:', error);
+      setContextStatus('error');
+    }
+  }, []);
+
   // 自动滚动到最新消息
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -90,11 +217,21 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   useEffect(() => {
     if (!enablePageContext) return;
 
+    const isInIframe = window.parent && window.parent !== window;
+    
+    if (!isInIframe) {
+      // 不在iframe环境中，直接提取当前页面上下文
+      console.log('初始化时直接提取页面上下文');
+      extractCurrentPageContext();
+    }
+
     const handleMessage = (event: MessageEvent) => {
       const { type, data } = event.data;
+      console.log('FloatingAssistant 收到消息:', type, data); // 添加调试日志
       
       switch (type) {
         case 'ai-assistant-updateContext':
+          console.log('收到上下文更新消息');
           if (data.context) {
             setPageContext(data.context);
             setContextStatus('ready');
@@ -104,18 +241,24 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
           break;
           
         case 'ai-assistant-init':
+          console.log('收到初始化消息');
           if (data.context) {
             setPageContext(data.context);
             setContextStatus('ready');
             setLastContextUpdate(new Date());
+            console.log('初始页面上下文已设置:', data.context.basic?.title);
           }
           break;
       }
     };
 
+    console.log('设置消息监听器...');
     window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, [enablePageContext]);
+    return () => {
+      console.log('移除消息监听器...');
+      window.removeEventListener('message', handleMessage);
+    };
+  }, [enablePageContext, extractCurrentPageContext]);
 
   // 停止语音识别 - 会发送当前文本
   const stopListening = useCallback(() => {
@@ -208,18 +351,29 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   const requestContextUpdate = useCallback(() => {
     if (!enablePageContext) return;
     
+    console.log('请求页面上下文更新...');
     setContextStatus('loading');
-    // 向父页面发送请求上下文消息
-    if (window.parent && window.parent !== window) {
+    
+    // 检查是否在iframe环境中
+    const isInIframe = window.parent && window.parent !== window;
+    
+    if (isInIframe) {
+      // 在iframe中，向父页面请求上下文
+      console.log('发送requestPageContext消息到父页面');
       window.parent.postMessage(
-        { type: 'ai-assistant-requestContext' },
+        { type: 'ai-assistant-requestPageContext' },
         '*'
       );
+    } else {
+      // 不在iframe中，直接提取当前页面上下文
+      console.log('不在iframe环境中，直接提取当前页面上下文');
+      extractCurrentPageContext();
     }
     
     // 如果3秒后还没收到回复，标记为错误
     setTimeout(() => {
       if (contextStatus === 'loading') {
+        console.log('3秒超时，标记上下文获取失败');
         setContextStatus('error');
       }
     }, 3000);
@@ -413,7 +567,11 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     try {
       // 如果是页面相关问题但没有上下文，尝试获取
       const isPageQuestion = isPageRelatedQuestion(content);
+      console.log('是否为页面相关问题:', isPageQuestion);
+      console.log('当前页面上下文:', pageContext);
+      
       if (isPageQuestion && !pageContext && enablePageContext) {
+        console.log('页面相关问题但无上下文，请求更新...');
         requestContextUpdate();
         // 等待一下看是否能获取到上下文
         await new Promise(resolve => setTimeout(resolve, 1000));
@@ -432,8 +590,13 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
 
       // 如果有页面上下文，添加到请求中
       if (pageContext && enablePageContext) {
+        console.log('添加页面上下文到请求:', pageContext.basic?.title);
         requestBody.pageContext = pageContext;
+      } else {
+        console.log('无页面上下文或未启用页面上下文功能');
       }
+
+      console.log('发送聊天请求:', requestBody);
 
       // 第一步：发送用户消息，检查是否需要工具调用
       const response = await fetch('/api/chat', {
@@ -776,6 +939,8 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
           return <FileText size={12} />;
         case 'error':
           return <X size={12} />;
+        case 'disabled':
+          return <FileText size={12} className="opacity-50" />;
         default:
           return <FileText size={12} className="opacity-50" />;
       }
@@ -786,11 +951,13 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
         case 'loading':
           return '正在获取页面信息...';
         case 'ready':
-          return pageContext ? `&ldquo;${pageContext.basic.title}&rdquo;` : '页面信息就绪';
+          return pageContext?.basic?.title ? `"${pageContext.basic.title}"` : '页面信息就绪';
         case 'error':
           return '无法获取页面信息';
-        default:
+        case 'disabled':
           return '页面感知已禁用';
+        default:
+          return '状态未知';
       }
     };
 
@@ -802,6 +969,8 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
           return 'text-green-600 bg-green-50 border-green-200';
         case 'error':
           return 'text-red-600 bg-red-50 border-red-200';
+        case 'disabled':
+          return 'text-gray-500 bg-gray-50 border-gray-200';
         default:
           return 'text-gray-500 bg-gray-50 border-gray-200';
       }
@@ -825,44 +994,6 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
               重试
             </button>
           )}
-        </div>
-      </div>
-    );
-  };
-
-  // 处理快速问题点击
-  const handleQuickQuestion = useCallback((question: string) => {
-    setInputValue(question);
-    sendMessage(question);
-  }, [sendMessage]);
-
-  // 渲染页面相关的快速问题
-  const renderPageQuickQuestions = () => {
-    if (!pageContext || contextStatus !== 'ready' || !enablePageContext) return null;
-
-    const quickQuestions = [
-      '总结这个页面的内容',
-      '这个页面主要讲什么？',
-      '页面中有哪些重要信息？',
-    ];
-
-    return (
-      <div className="mb-4 px-4">
-        <div className="text-xs text-gray-500 mb-2 flex items-center gap-1">
-          <FileText size={12} />
-          页面相关问题：
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {quickQuestions.map((question, index) => (
-            <button
-              key={index}
-              onClick={() => handleQuickQuestion(question)}
-              className="text-xs px-3 py-1 bg-green-50 text-green-600 rounded-full hover:bg-green-100 transition-colors border border-green-200"
-              disabled={isLoading}
-            >
-              {question}
-            </button>
-          ))}
         </div>
       </div>
     );
@@ -1097,9 +1228,6 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
               )}
               <div ref={messagesEndRef} />
             </div>
-
-            {/* 页面相关快速问题 */}
-            {renderPageQuickQuestions()}
 
             {/* Anthropic 风格输入区域 */}
             <div className="border-t border-gray-100 p-4 bg-white">
