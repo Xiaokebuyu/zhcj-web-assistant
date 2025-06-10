@@ -16,6 +16,45 @@ export interface ToolProgress {
   totalSteps: number;
 }
 
+// 页面上下文类型
+export interface PageContext {
+  basic: {
+    title: string;
+    url: string;
+    description?: string;
+    type: string; // 'article', 'product', 'home', 'blog', etc.
+  };
+  content?: {
+    text?: string;
+    headings?: string[];
+    links?: Array<{ text: string; url: string; }>;
+    images?: Array<{ alt: string; src: string; }>;
+  };
+  metadata?: {
+    author?: string;
+    publishDate?: string;
+    keywords?: string[];
+    language?: string;
+  };
+  structure?: {
+    wordCount?: number;
+    readingTime?: number;
+    sections?: string[];
+  };
+  extracted?: {
+    summary?: string;
+    keyPoints?: string[];
+    categories?: string[];
+  };
+}
+
+// 页面信息类型
+export interface PageInfo {
+  title: string;
+  url: string;
+  type: string;
+}
+
 // 基础聊天消息类型
 export interface ChatMessage {
   id: string;
@@ -26,6 +65,8 @@ export interface ChatMessage {
   isVoice?: boolean; // 是否为语音输入的消息
   isThinking?: boolean; // 标记思考中的消息
   toolCalls?: ToolCall[]; // 工具调用信息
+  contextUsed?: boolean; // 是否使用了页面上下文
+  pageInfo?: PageInfo; // 页面信息
 }
 
 // 助手配置类型
@@ -34,6 +75,7 @@ export interface AssistantConfig {
   position?: 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left';
   theme?: 'light' | 'dark' | 'auto';
   enableVoice?: boolean;
+  enablePageContext?: boolean; // 是否启用页面上下文
   maxMessages?: number;
 }
 
@@ -77,6 +119,15 @@ export interface ChatRequest {
   model?: string;
   temperature?: number;
   max_tokens?: number;
+  pageContext?: PageContext; // 页面上下文
+  tools?: Array<{
+    type: string;
+    function: {
+      name: string;
+      description: string;
+      parameters: object;
+    };
+  }>;
 }
 
 // 聊天API响应类型
@@ -90,6 +141,10 @@ export interface ChatResponse {
   };
   error?: string;
   isSimulated?: boolean;
+  requiresToolCalls?: boolean; // 是否需要工具调用
+  tool_calls?: ToolCall[]; // 工具调用数组
+  contextUsed?: boolean; // 是否使用了页面上下文
+  pageInfo?: PageInfo; // 页面信息
 }
 
 // 错误类型
@@ -193,4 +248,7 @@ declare global {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     initAIAssistant?: (options: EmbedOptions) => any;
   }
-} 
+}
+
+// 页面上下文状态类型
+export type ContextStatus = 'loading' | 'ready' | 'error' | 'disabled'; 

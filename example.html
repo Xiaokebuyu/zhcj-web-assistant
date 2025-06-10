@@ -183,6 +183,19 @@
     <!-- AI 助手集成代码 - 开始 -->
     <script src="http://localhost:3000/embed.js"></script>
     <script>
+        window.initAIAssistant({
+          config: {
+            position: 'bottom-right',
+            theme: 'light',
+            enableVoice: true,
+            // 🎯 新增：页面感知配置
+            enablePageContext: true,      // 启用页面感知
+            contextDepth: 'medium',       // 提取深度
+            autoUpdateContext: true       // 自动更新上下文
+          }
+        });
+      </script>
+    <script>
         // 等待页面加载完成后初始化 AI 助手
         document.addEventListener('DOMContentLoaded', function() {
             window.initAIAssistant({

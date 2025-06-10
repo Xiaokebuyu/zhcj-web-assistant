@@ -12,16 +12,158 @@ interface ToolDefinition {
   function: {
     name: string;
     description: string;
-    parameters: any;
+    parameters: Record<string, unknown>;
   };
 }
 
+// 扩展的聊天请求接口
 interface ChatRequest {
   messages: ChatMessage[];
   model?: string;
   temperature?: number;
   max_tokens?: number;
   tools?: ToolDefinition[];
+  // 新增：页面上下文
+  pageContext?: {
+    basic: {
+      url: string;
+      title: string;
+      domain: string;
+      pathname: string;
+      timestamp: string;
+    };
+    meta: Record<string, string>;
+    headings: Array<{
+      level: number;
+      text: string;
+      id?: string;
+    }>;
+    mainContent: {
+      summary: string;
+      sections?: Array<{
+        index: number;
+        tag: string;
+        text: string;
+        className?: string;
+      }>;
+      keyElements?: Array<{
+        type: string;
+        text?: string;
+        href?: string;
+        alt?: string;
+        src?: string;
+        items?: string[];
+      }>;
+      fullText?: string;
+    };
+    navigation: {
+      breadcrumbs?: Array<{
+        text: string;
+        href: string;
+      }>;
+      mainNavigation?: Array<{
+        text: string;
+        href: string;
+        active: boolean;
+      }>;
+    };
+    pageType: string;
+  };
+}
+
+// 页面上下文处理器
+class PageContextProcessor {
+  // 生成页面上下文的系统消息
+  static generateContextSystemMessage(pageContext: ChatRequest['pageContext']): string {
+    if (!pageContext) return '';
+
+    const { basic, headings, mainContent, pageType, navigation } = pageContext;
+    
+    let contextMessage = `[页面上下文信息]\n`;
+    
+    // 基本信息
+    contextMessage += `当前页面：${basic.title}\n`;
+    contextMessage += `页面URL：${basic.url}\n`;
+    contextMessage += `页面类型：${this.getPageTypeDescription(pageType)}\n`;
+    
+    // 导航信息
+    if (navigation.breadcrumbs && navigation.breadcrumbs.length > 0) {
+      contextMessage += `导航路径：${navigation.breadcrumbs.map(b => b.text).join(' > ')}\n`;
+    }
+    
+    // 页面结构
+    if (headings && headings.length > 0) {
+      contextMessage += `\n页面结构：\n`;
+      headings.slice(0, 8).forEach(heading => {
+        const indent = '  '.repeat(heading.level - 1);
+        contextMessage += `${indent}${heading.text}\n`;
+      });
+    }
+    
+    // 主要内容
+    if (mainContent.summary) {
+      contextMessage += `\n页面主要内容：\n${mainContent.summary}\n`;
+    }
+    
+    // 关键元素
+    if (mainContent.keyElements && mainContent.keyElements.length > 0) {
+      contextMessage += `\n页面关键元素：\n`;
+      mainContent.keyElements.slice(0, 10).forEach(element => {
+        if (element.type === 'link') {
+          contextMessage += `- 链接：${element.text}\n`;
+        } else if (element.type === 'image') {
+          contextMessage += `- 图片：${element.alt}\n`;
+        } else if (element.type === 'list' && element.items) {
+          contextMessage += `- 列表：${element.items.slice(0, 3).join(', ')}\n`;
+        }
+      });
+    }
+    
+    contextMessage += `\n---\n`;
+    contextMessage += `请基于以上页面上下文信息来回答用户的问题。当用户询问"这个页面"、"当前页面"、"总结页面内容"等相关问题时，请参考上述信息进行回答。\n`;
+    
+    return contextMessage;
+  }
+
+  // 获取页面类型描述
+  static getPageTypeDescription(pageType: string): string {
+    const typeMap: Record<string, string> = {
+      'homepage': '首页',
+      'about': '关于页面',
+      'contact': '联系页面',
+      'blog_post': '博客文章',
+      'product': '产品页面',
+      'portfolio': '作品展示页面',
+      'general': '一般页面'
+    };
+    
+    return typeMap[pageType] || '未知页面类型';
+  }
+
+  // 检测是否为页面相关问题
+  static isPageRelatedQuestion(userMessage: string): boolean {
+    const pageKeywords = [
+      '这个页面', '当前页面', '这页', '本页',
+      '总结页面', '页面内容', '页面说什么', '页面讲什么',
+      '这里写的什么', '这里说的什么', '这个网站',
+      '这个作品', '这个项目', '这篇文章',
+      '页面主要内容', '这个页面讲的是什么'
+    ];
+    
+    return pageKeywords.some(keyword => 
+      userMessage.toLowerCase().includes(keyword.toLowerCase())
+    );
+  }
+
+  // 增强用户消息（为页面相关问题添加上下文提示）
+  static enhanceUserMessage(userMessage: string, pageContext: ChatRequest['pageContext']): string {
+    if (!pageContext || !this.isPageRelatedQuestion(userMessage)) {
+      return userMessage;
+    }
+
+    // 为页面相关问题添加明确的上下文提示
+    return userMessage + `\n\n[请基于当前页面"${pageContext.basic.title}"的内容来回答这个问题]`;
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -31,7 +173,8 @@ export async function POST(request: NextRequest) {
       model = 'deepseek-reasoner', 
       temperature = 0.7, 
       max_tokens = 1000,
-      tools 
+      tools,
+      pageContext
     }: ChatRequest = await request.json();
 
     // 验证请求数据
@@ -57,20 +200,59 @@ export async function POST(request: NextRequest) {
     const lastUserMessage = messages[messages.length - 1];
     const userContent = lastUserMessage?.content || '';
 
-    // 添加系统提示
-    const systemMessage: ChatMessage = {
-      role: 'system',
-      content: `你是一个有用的AI助手。请用简洁、友好的方式回答用户的问题。
+    // 处理消息数组
+    const processedMessages = [...messages];
+    
+    // 如果有页面上下文，处理最后一条用户消息
+    if (pageContext && messages.length > 0) {
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage.role === 'user') {
+        // 增强用户消息
+        const enhancedContent = PageContextProcessor.enhanceUserMessage(
+          lastMessage.content, 
+          pageContext
+        );
+        
+        processedMessages[processedMessages.length - 1] = {
+          ...lastMessage,
+          content: enhancedContent
+        };
+      }
+    }
+
+    // 构建系统消息
+    let systemContent = `你是一个有用的AI助手。请用简洁、友好的方式回答用户的问题。
 
 当用户询问天气相关信息时，你可以使用 get_weather 工具来获取准确的天气数据。
 
-如果用户询问天气，请调用相应的工具获取最新信息，然后用自然语言为用户总结和解释结果。`
+如果用户询问天气，请调用相应的工具获取最新信息，然后用自然语言为用户总结和解释结果。`;
+
+    // 如果有页面上下文且用户询问页面相关问题，添加上下文信息
+    if (pageContext) {
+      const lastProcessedMessage = processedMessages[processedMessages.length - 1];
+      if (lastProcessedMessage?.role === 'user' && 
+          PageContextProcessor.isPageRelatedQuestion(lastProcessedMessage.content)) {
+        
+        systemContent += '\n\n' + PageContextProcessor.generateContextSystemMessage(pageContext);
+      }
+    }
+
+    const systemMessage: ChatMessage = {
+      role: 'system',
+      content: systemContent
     };
 
     // 构建请求体
-    const requestBody: any = {
+    const requestBody: {
+      model: string;
+      messages: ChatMessage[];
+      temperature: number;
+      max_tokens: number;
+      stream: boolean;
+      tools?: ToolDefinition[];
+    } = {
       model,
-      messages: [systemMessage, ...messages],
+      messages: [systemMessage, ...processedMessages],
       temperature,
       max_tokens,
       stream: false
@@ -124,7 +306,16 @@ export async function POST(request: NextRequest) {
           messageId: data.id || Date.now().toString(),
           tool_calls: message.tool_calls,
           usage: data.usage,
-          requiresToolCalls: true
+          requiresToolCalls: true,
+          // 添加上下文使用标记
+          contextUsed: pageContext ? PageContextProcessor.isPageRelatedQuestion(
+            processedMessages[processedMessages.length - 1]?.content || ''
+          ) : false,
+          pageInfo: pageContext ? {
+            title: pageContext.basic.title,
+            url: pageContext.basic.url,
+            type: pageContext.pageType
+          } : null
         });
       }
 
@@ -135,7 +326,16 @@ export async function POST(request: NextRequest) {
         message: aiMessage,
         messageId: data.id || Date.now().toString(),
         usage: data.usage,
-        requiresToolCalls: false
+        requiresToolCalls: false,
+        // 添加上下文使用标记
+        contextUsed: pageContext ? PageContextProcessor.isPageRelatedQuestion(
+          processedMessages[processedMessages.length - 1]?.content || ''
+        ) : false,
+        pageInfo: pageContext ? {
+          title: pageContext.basic.title,
+          url: pageContext.basic.url,
+          type: pageContext.pageType
+        } : null
       });
 
     } catch (networkError) {
@@ -187,12 +387,18 @@ function generateFallbackResponse(userContent: string): NextResponse {
   });
 }
 
-// 可选：支持GET请求用于健康检查
+// 健康检查端点
 export async function GET() {
   return NextResponse.json({ 
     status: 'ok', 
     service: 'AI Chat API',
     timestamp: new Date().toISOString(),
-    features: ['chat', 'tools', 'weather']
+    features: {
+      chat: true,
+      tools: true,
+      weather: true,
+      pageContext: true,
+      enhancedProcessing: true
+    }
   });
 }

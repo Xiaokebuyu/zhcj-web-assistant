@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { MessageCircle, X, Minus, Send, Mic, Volume2, VolumeX, Settings, Square } from 'lucide-react';
-import { ChatMessage, AssistantConfig, VoiceState, VoiceSettings, STTConfig, StreamingSTTEvent, ToolCall, ToolProgress } from '@/types';
+import { MessageCircle, X, Minus, Send, Mic, Volume2, VolumeX, Settings, Square, FileText, RefreshCw } from 'lucide-react';
+import { ChatMessage, AssistantConfig, VoiceState, VoiceSettings, STTConfig, StreamingSTTEvent, ToolCall, ToolProgress, PageContext, ContextStatus, ChatRequest } from '@/types';
 import { StreamingSpeechRecognition } from '@/utils/streamingSpeechRecognition';
 import { toolDefinitions } from '@/utils/toolManager';
 
@@ -54,6 +54,11 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     totalSteps: 0
   });
 
+  // 页面上下文相关状态
+  const [pageContext, setPageContext] = useState<PageContext | null>(null);
+  const [contextStatus, setContextStatus] = useState<ContextStatus>('disabled');
+  const [lastContextUpdate, setLastContextUpdate] = useState<Date | null>(null);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -64,7 +69,8 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
 
   const {
     position = 'bottom-right',
-    enableVoice = true
+    enableVoice = true,
+    enablePageContext = true
   } = config;
 
   // STT配置
@@ -79,6 +85,37 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // 监听来自父页面的消息（页面上下文）
+  useEffect(() => {
+    if (!enablePageContext) return;
+
+    const handleMessage = (event: MessageEvent) => {
+      const { type, data } = event.data;
+      
+      switch (type) {
+        case 'ai-assistant-updateContext':
+          if (data.context) {
+            setPageContext(data.context);
+            setContextStatus('ready');
+            setLastContextUpdate(new Date());
+            console.log('页面上下文已更新:', data.context.basic?.title);
+          }
+          break;
+          
+        case 'ai-assistant-init':
+          if (data.context) {
+            setPageContext(data.context);
+            setContextStatus('ready');
+            setLastContextUpdate(new Date());
+          }
+          break;
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [enablePageContext]);
 
   // 停止语音识别 - 会发送当前文本
   const stopListening = useCallback(() => {
@@ -167,8 +204,49 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     return toolNames[toolName] || toolName;
   }, []);
 
+  // 请求页面上下文更新
+  const requestContextUpdate = useCallback(() => {
+    if (!enablePageContext) return;
+    
+    setContextStatus('loading');
+    // 向父页面发送请求上下文消息
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage(
+        { type: 'ai-assistant-requestContext' },
+        '*'
+      );
+    }
+    
+    // 如果3秒后还没收到回复，标记为错误
+    setTimeout(() => {
+      if (contextStatus === 'loading') {
+        setContextStatus('error');
+      }
+    }, 3000);
+  }, [enablePageContext, contextStatus]);
+
+  // 检测是否为页面相关问题
+  const isPageRelatedQuestion = useCallback((message: string): boolean => {
+    const pageKeywords = [
+      '这个页面', '当前页面', '这页', '本页',
+      '总结页面', '页面内容', '页面说什么', '页面讲什么',
+      '这里写的什么', '这里说的什么', '这个网站',
+      '这个作品', '这个项目', '这篇文章',
+      '页面主要内容', '这个页面讲的是什么'
+    ];
+    
+    return pageKeywords.some(keyword => 
+      message.toLowerCase().includes(keyword.toLowerCase())
+    );
+  }, []);
+
   // 处理直接回复的函数
-  const handleDirectResponse = useCallback(async (data: { message: string; messageId: string }) => {
+  const handleDirectResponse = useCallback(async (data: { 
+    message: string; 
+    messageId: string;
+    contextUsed?: boolean;
+    pageInfo?: { title: string; url: string; type: string; };
+  }) => {
     // 生成语音（如果启用）
     let audioUrl: string | undefined = undefined;
     if (enableVoice && voiceSettings.autoPlay) {
@@ -181,7 +259,9 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
       role: 'assistant',
       content: data.message,
       timestamp: new Date(),
-      audioUrl
+      audioUrl,
+      contextUsed: data.contextUsed,
+      pageInfo: data.pageInfo
     };
 
     setMessages(prev => [...prev, assistantMessage]);
@@ -331,17 +411,35 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     setIsLoading(true);
 
     try {
+      // 如果是页面相关问题但没有上下文，尝试获取
+      const isPageQuestion = isPageRelatedQuestion(content);
+      if (isPageQuestion && !pageContext && enablePageContext) {
+        requestContextUpdate();
+        // 等待一下看是否能获取到上下文
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+
+      // 构建请求
+      const requestBody: ChatRequest = {
+        messages: [...messages, userMessage].map(m => ({
+          role: m.role,
+          content: m.content
+        })),
+        tools: toolDefinitions, // 包含工具定义
+        temperature: 0.7,
+        max_tokens: 2048,
+      };
+
+      // 如果有页面上下文，添加到请求中
+      if (pageContext && enablePageContext) {
+        requestBody.pageContext = pageContext;
+      }
+
       // 第一步：发送用户消息，检查是否需要工具调用
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [...messages, userMessage].map(m => ({
-            role: m.role,
-            content: m.content
-          })),
-          tools: toolDefinitions // 包含工具定义
-        })
+        body: JSON.stringify(requestBody)
       });
 
       if (!response.ok) throw new Error('网络请求失败');
@@ -379,7 +477,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
         totalSteps: 0
       });
     }
-  }, [isLoading, messages, onError, handleToolCalls, handleDirectResponse]);
+  }, [isLoading, messages, onError, handleToolCalls, handleDirectResponse, isPageRelatedQuestion, pageContext, enablePageContext, requestContextUpdate]);
 
   // 处理STT事件
   const handleSTTEvent = useCallback((event: StreamingSTTEvent) => {
@@ -604,6 +702,12 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                 使用了工具
               </span>
             )}
+            {message.contextUsed && message.pageInfo && (
+              <span className="ml-2 inline-flex items-center text-xs bg-green-100 text-green-600 px-2 py-0.5 rounded-full">
+                <FileText size={10} className="mr-1" />
+                页面内容
+              </span>
+            )}
 
             {/* 工具调用进度显示 */}
             {message.isThinking && toolProgress.isToolCalling && (
@@ -618,6 +722,16 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                     className="bg-blue-500 h-1.5 rounded-full transition-all duration-300" 
                     style={{ width: `${(toolProgress.step / toolProgress.totalSteps) * 100}%` }}
                   ></div>
+                </div>
+              </div>
+            )}
+            
+            {/* 显示页面上下文使用状态 */}
+            {message.contextUsed && message.pageInfo && (
+              <div className="mt-3 pt-2 border-t border-green-200">
+                <div className="text-xs text-green-700 flex items-center gap-1">
+                  <FileText size={12} />
+                  <span>基于页面&ldquo;{message.pageInfo.title}&rdquo;的内容回答</span>
                 </div>
               </div>
             )}
@@ -645,6 +759,110 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
               </div>
             )}
           </div>
+        </div>
+      </div>
+    );
+  };
+
+  // 渲染页面上下文状态指示器
+  const renderContextStatus = () => {
+    if (!enablePageContext) return null;
+
+    const getStatusIcon = () => {
+      switch (contextStatus) {
+        case 'loading':
+          return <RefreshCw size={12} className="animate-spin" />;
+        case 'ready':
+          return <FileText size={12} />;
+        case 'error':
+          return <X size={12} />;
+        default:
+          return <FileText size={12} className="opacity-50" />;
+      }
+    };
+
+    const getStatusText = () => {
+      switch (contextStatus) {
+        case 'loading':
+          return '正在获取页面信息...';
+        case 'ready':
+          return pageContext ? `&ldquo;${pageContext.basic.title}&rdquo;` : '页面信息就绪';
+        case 'error':
+          return '无法获取页面信息';
+        default:
+          return '页面感知已禁用';
+      }
+    };
+
+    const getStatusColor = () => {
+      switch (contextStatus) {
+        case 'loading':
+          return 'text-blue-600 bg-blue-50 border-blue-200';
+        case 'ready':
+          return 'text-green-600 bg-green-50 border-green-200';
+        case 'error':
+          return 'text-red-600 bg-red-50 border-red-200';
+        default:
+          return 'text-gray-500 bg-gray-50 border-gray-200';
+      }
+    };
+
+    return (
+      <div className={`text-xs ${getStatusColor()} border rounded-lg p-2 mb-3 mx-4`}>
+        <div className="flex items-center gap-2">
+          {getStatusIcon()}
+          <span className="flex-1">{getStatusText()}</span>
+          {lastContextUpdate && contextStatus === 'ready' && (
+            <span className="text-gray-400">
+              {new Date(lastContextUpdate).toLocaleTimeString()}
+            </span>
+          )}
+          {contextStatus === 'error' && (
+            <button
+              onClick={requestContextUpdate}
+              className="text-blue-600 hover:text-blue-800 underline ml-2"
+            >
+              重试
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  // 处理快速问题点击
+  const handleQuickQuestion = useCallback((question: string) => {
+    setInputValue(question);
+    sendMessage(question);
+  }, [sendMessage]);
+
+  // 渲染页面相关的快速问题
+  const renderPageQuickQuestions = () => {
+    if (!pageContext || contextStatus !== 'ready' || !enablePageContext) return null;
+
+    const quickQuestions = [
+      '总结这个页面的内容',
+      '这个页面主要讲什么？',
+      '页面中有哪些重要信息？',
+    ];
+
+    return (
+      <div className="mb-4 px-4">
+        <div className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+          <FileText size={12} />
+          页面相关问题：
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {quickQuestions.map((question, index) => (
+            <button
+              key={index}
+              onClick={() => handleQuickQuestion(question)}
+              className="text-xs px-3 py-1 bg-green-50 text-green-600 rounded-full hover:bg-green-100 transition-colors border border-green-200"
+              disabled={isLoading}
+            >
+              {question}
+            </button>
+          ))}
         </div>
       </div>
     );
@@ -840,6 +1058,9 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
         {!isMinimized && (
           <>
             <div className="flex-1 overflow-y-auto p-4 h-80 space-y-4 bg-gradient-to-b from-white to-gray-50/50">
+              {/* 页面上下文状态 */}
+              {renderContextStatus()}
+              
               {/* 实时转录显示区域 */}
               {renderTranscriptDisplay()}
               {messages.length === 0 ? (
@@ -849,7 +1070,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                   </div>
                   <p className="text-gray-600 text-sm leading-relaxed">
                     你好！我是你的 AI 助手<br />
-                    有什么可以帮助你的吗？
+                    {pageContext ? '我可以帮你分析当前页面内容，或回答其他问题' : '有什么可以帮助你的吗？'}
                   </p>
                 </div>
               ) : (
@@ -877,6 +1098,9 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
               <div ref={messagesEndRef} />
             </div>
 
+            {/* 页面相关快速问题 */}
+            {renderPageQuickQuestions()}
+
             {/* Anthropic 风格输入区域 */}
             <div className="border-t border-gray-100 p-4 bg-white">
               <form onSubmit={handleSubmit} className="flex gap-3">
@@ -886,7 +1110,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                     type="text"
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
-                    placeholder="输入消息..."
+                    placeholder={pageContext ? "问我关于这个页面的任何问题..." : "输入消息..."}
                     className="w-full px-4 py-3 border border-gray-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-300 transition-all duration-200 bg-gray-50/50 hover:bg-white"
                     disabled={isLoading || voiceState.isListening}
                   />
