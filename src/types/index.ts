@@ -1,3 +1,21 @@
+// 工具调用相关类型
+export interface ToolCall {
+  id: string;
+  type: 'function';
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
+export interface ToolProgress {
+  isToolCalling: boolean;
+  currentTool?: string;
+  progress: string;
+  step: number;
+  totalSteps: number;
+}
+
 // 基础聊天消息类型
 export interface ChatMessage {
   id: string;
@@ -6,6 +24,8 @@ export interface ChatMessage {
   timestamp: Date;
   audioUrl?: string; // 语音消息的音频URL
   isVoice?: boolean; // 是否为语音输入的消息
+  isThinking?: boolean; // 标记思考中的消息
+  toolCalls?: ToolCall[]; // 工具调用信息
 }
 
 // 助手配置类型

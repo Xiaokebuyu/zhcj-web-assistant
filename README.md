@@ -42,11 +42,6 @@
 ### 1. 克隆和安装
 
 ```bash
-# 克隆项目
-git clone https://github.com/Xiaokebuyu/zhcj-web-assistant.git
-cd ai-assistant
-
-# 安装依赖
 npm install
 
 # 安装语音合成依赖
@@ -75,7 +70,6 @@ NODE_ENV=development
 ```bash
 # 启动开发服务器 (使用 Turbopack 加速)
 npm run dev
-
 ```
 
 访问 `http://localhost:3000` 查看项目主页。
@@ -124,11 +118,6 @@ npm run dev
   });
   
   assistant.init();
-  
-  // 高级API使用
-  assistant.show();    // 显示助手
-  assistant.hide();    // 隐藏助手
-  assistant.destroy(); // 销毁助手
 </script>
 ```
 
@@ -370,131 +359,27 @@ npm start
 ```env
 DEEPSEEK_API_KEY=your_production_api_key
 NEXT_PUBLIC_APP_URL=https://your-domain.com
-NODE_ENV=production
 ```
 
-2. **服务器配置**
+## 贡献
 
-```nginx
-# Nginx 配置示例
-server {
-    listen 80;
-    server_name your-domain.com;
-    
-    location / {
-        proxy_pass http://localhost:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
-        
-        # 允许大文件上传 (语音文件)
-        client_max_body_size 10M;
-    }
-    
-    # 静态文件缓存
-    location /embed.js {
-        proxy_pass http://localhost:3000;
-        expires 1h;
-        add_header Cache-Control "public, immutable";
-    }
-}
+欢迎提交 Issue 和 Pull Request！
 
+## 许可证
 
-## 🔧 故障排除
+MIT License
 
-### 常见问题
+## 联系方式
 
-**1. 语音功能不工作**
+如有问题，请通过以下方式联系：
 
-```bash
-# 检查 Python 环境
-python --version
-
-# 重新安装 edge-tts
-pip install --upgrade edge-tts
-
-# 检查权限
-chmod +x venv/bin/edge-tts
-```
-
-**2. API 连接失败**
-
-```javascript
-// 检查 API 密钥配置
-console.log(process.env.DEEPSEEK_API_KEY ? '✅ API密钥已配置' : '❌ API密钥未配置');
-
-// 测试 API 连接
-fetch('/api/chat', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    messages: [{ role: 'user', content: 'test' }]
-  })
-}).then(res => console.log('API状态:', res.status));
-```
-
-**3. 嵌入集成问题**
-
-```html
-<!-- 检查跨域配置 -->
-<script>
-console.log('iframe加载状态:', document.querySelector('iframe').contentWindow);
-</script>
-
-<!-- 检查控制台错误信息 -->
-```
-
-### 调试模式
-
-```javascript
-// 启用详细日志
-const assistant = new AIAssistant({
-  config: { debug: true },
-  onError: (error) => {
-    console.error('详细错误信息:', error);
-  }
-});
-```
-
-## 📊 性能优化
-
-### 前端优化
-
-- ✅ 使用 Next.js 自动代码分割
-- ✅ 图片和资源自动优化
-- ✅ 语音文件本地缓存
-- ✅ API 请求防抖处理
-
-### 后端优化
-
-- ✅ API 响应缓存
-- ✅ 语音文件临时存储清理
-- ✅ 请求频率限制
-- ✅ 错误重试机制
-
-
-
-
-## 📄 许可证
-
-本项目采用 [MIT License](LICENSE) 许可证。
-
-## 🙏 致谢
-
-- [DeepSeek](https://www.deepseek.com/) - 提供强大的AI对话能力
-- [Edge-TTS](https://github.com/rany2/edge-tts) - 高质量的语音合成
-- [Next.js](https://nextjs.org/) - 优秀的React框架
-- [Tailwind CSS](https://tailwindcss.com/) - 实用的CSS框架
-
+- GitHub Issues
+- Email: your-email@example.com
 
 ---
 
-<div align="center">
-
-**[🏠 首页](http://localhost:3000)** • **[📖 在线文档](#)** • **[🚀 演示预览](http://localhost:3000/embed)** • **[📦 下载最新版](#)**
-
 Made with ❤️ by AI Assistant Team
+
+</div>
 
 </div>

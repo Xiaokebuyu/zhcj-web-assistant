@@ -1,8 +1,19 @@
+// src/app/api/chat/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 
 interface ChatMessage {
-  role: 'user' | 'assistant' | 'system';
+  role: 'user' | 'assistant' | 'system' | 'tool';
   content: string;
+  tool_call_id?: string;
+}
+
+interface ToolDefinition {
+  type: string;
+  function: {
+    name: string;
+    description: string;
+    parameters: any;
+  };
 }
 
 interface ChatRequest {
@@ -10,11 +21,18 @@ interface ChatRequest {
   model?: string;
   temperature?: number;
   max_tokens?: number;
+  tools?: ToolDefinition[];
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const { messages, model = 'deepseek-reasoner', temperature = 0.7, max_tokens = 1000 }: ChatRequest = await request.json();
+    const { 
+      messages, 
+      model = 'deepseek-reasoner', 
+      temperature = 0.7, 
+      max_tokens = 1000,
+      tools 
+    }: ChatRequest = await request.json();
 
     // 验证请求数据
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
@@ -42,10 +60,15 @@ export async function POST(request: NextRequest) {
     // 添加系统提示
     const systemMessage: ChatMessage = {
       role: 'system',
-      content: '你是一个有用的AI助手。请用简洁、友好的方式回答用户的问题。'
+      content: `你是一个有用的AI助手。请用简洁、友好的方式回答用户的问题。
+
+当用户询问天气相关信息时，你可以使用 get_weather 工具来获取准确的天气数据。
+
+如果用户询问天气，请调用相应的工具获取最新信息，然后用自然语言为用户总结和解释结果。`
     };
 
-    const requestBody = {
+    // 构建请求体
+    const requestBody: any = {
       model,
       messages: [systemMessage, ...messages],
       temperature,
@@ -53,10 +76,15 @@ export async function POST(request: NextRequest) {
       stream: false
     };
 
+    // 如果提供了工具定义，添加到请求中
+    if (tools && tools.length > 0) {
+      requestBody.tools = tools;
+    }
+
     try {
       // 调用DeepSeek API（带超时控制）
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10秒超时
+      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15秒超时
 
       const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
         method: 'POST',
@@ -86,12 +114,28 @@ export async function POST(request: NextRequest) {
         return generateFallbackResponse(userContent);
       }
 
-      const aiMessage = data.choices[0].message?.content || '抱歉，我无法生成回复。';
+      const choice = data.choices[0];
+      const message = choice.message;
+
+      // 检查是否需要调用工具
+      if (message.tool_calls && message.tool_calls.length > 0) {
+        return NextResponse.json({
+          message: message.content || '',
+          messageId: data.id || Date.now().toString(),
+          tool_calls: message.tool_calls,
+          usage: data.usage,
+          requiresToolCalls: true
+        });
+      }
+
+      // 正常回复
+      const aiMessage = message.content || '抱歉，我无法生成回复。';
 
       return NextResponse.json({
         message: aiMessage,
         messageId: data.id || Date.now().toString(),
-        usage: data.usage // 可选：返回使用统计
+        usage: data.usage,
+        requiresToolCalls: false
       });
 
     } catch (networkError) {
@@ -119,7 +163,9 @@ function generateFallbackResponse(userContent: string): NextResponse {
   let message = '';
 
   // 根据用户输入生成相应的模拟回复
-  if (lowerContent.includes('你好') || lowerContent.includes('hello') || lowerContent.includes('hi')) {
+  if (lowerContent.includes('天气') || lowerContent.includes('weather')) {
+    message = '抱歉，我现在无法获取实时天气信息。您可以尝试重新提问，或者稍后再试。建议您查看本地天气应用或网站获取准确的天气信息。';
+  } else if (lowerContent.includes('你好') || lowerContent.includes('hello') || lowerContent.includes('hi')) {
     message = '你好！我是你的 AI 助手。虽然现在网络连接有些问题，但我还是很高兴为你服务！有什么可以帮助你的吗？';
   } else if (lowerContent.includes('什么') || lowerContent.includes('怎么') || lowerContent.includes('如何')) {
     message = '这是一个很好的问题！虽然我现在无法访问在线服务，但我建议你可以：\n\n1. 尝试重新发送消息\n2. 检查网络连接\n3. 稍后再试\n\n有什么其他我可以帮助的吗？';
@@ -146,6 +192,7 @@ export async function GET() {
   return NextResponse.json({ 
     status: 'ok', 
     service: 'AI Chat API',
-    timestamp: new Date().toISOString() 
+    timestamp: new Date().toISOString(),
+    features: ['chat', 'tools', 'weather']
   });
-} 
+}

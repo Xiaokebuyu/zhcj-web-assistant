@@ -2,8 +2,9 @@
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { MessageCircle, X, Minus, Send, Mic, Volume2, VolumeX, Settings, Square } from 'lucide-react';
-import { ChatMessage, AssistantConfig, VoiceState, VoiceSettings, STTConfig, StreamingSTTEvent } from '@/types';
+import { ChatMessage, AssistantConfig, VoiceState, VoiceSettings, STTConfig, StreamingSTTEvent, ToolCall, ToolProgress } from '@/types';
 import { StreamingSpeechRecognition } from '@/utils/streamingSpeechRecognition';
+import { toolDefinitions } from '@/utils/toolManager';
 
 interface FloatingAssistantProps {
   config?: AssistantConfig;
@@ -43,6 +44,14 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     pitch: '0%',
     volume: '0%',
     autoPlay: true,
+  });
+
+  // 工具调用状态
+  const [toolProgress, setToolProgress] = useState<ToolProgress>({
+    isToolCalling: false,
+    progress: '',
+    step: 0,
+    totalSteps: 0
   });
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -150,6 +159,161 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     }
   }, []);
 
+  // 获取工具显示名称
+  const getToolDisplayName = useCallback((toolName: string): string => {
+    const toolNames: Record<string, string> = {
+      'get_weather': '天气查询'
+    };
+    return toolNames[toolName] || toolName;
+  }, []);
+
+  // 处理直接回复的函数
+  const handleDirectResponse = useCallback(async (data: { message: string; messageId: string }) => {
+    // 生成语音（如果启用）
+    let audioUrl: string | undefined = undefined;
+    if (enableVoice && voiceSettings.autoPlay) {
+      const generatedUrl = await generateSpeech(data.message);
+      audioUrl = generatedUrl || undefined;
+    }
+
+    const assistantMessage: ChatMessage = {
+      id: data.messageId,
+      role: 'assistant',
+      content: data.message,
+      timestamp: new Date(),
+      audioUrl
+    };
+
+    setMessages(prev => [...prev, assistantMessage]);
+
+    // 自动播放语音
+    if (audioUrl && voiceSettings.autoPlay) {
+      setTimeout(() => playAudio(audioUrl), 500);
+    }
+  }, [enableVoice, voiceSettings.autoPlay, generateSpeech, playAudio]);
+
+  // 处理工具调用的函数
+  const handleToolCalls = useCallback(async (toolCalls: ToolCall[], conversationHistory: ChatMessage[]) => {
+    // 显示"正在处理..."消息
+    const thinkingMessage: ChatMessage = {
+      id: `thinking-${Date.now()}`,
+      role: 'assistant',
+      content: '正在为您查询相关信息...',
+      timestamp: new Date(),
+      isThinking: true
+    };
+    setMessages(prev => [...prev, thinkingMessage]);
+
+    // 设置工具调用进度
+    setToolProgress({
+      isToolCalling: true,
+      currentTool: getToolDisplayName(toolCalls[0].function.name),
+      progress: '正在查询...',
+      step: 1,
+      totalSteps: 3
+    });
+
+    try {
+      // 执行工具调用
+      const toolResponse = await fetch('/api/tools', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tool_calls: toolCalls
+        })
+      });
+
+      if (!toolResponse.ok) {
+        throw new Error('工具调用失败');
+      }
+
+      const toolData = await toolResponse.json();
+      
+      if (!toolData.success) {
+        throw new Error('工具执行失败');
+      }
+
+      // 更新进度
+      setToolProgress(prev => ({
+        ...prev,
+        progress: '正在分析结果...',
+        step: 2
+      }));
+
+      // 第二步：将工具结果发送给AI进行整合
+      const finalResponse = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [
+            ...conversationHistory.map(m => ({
+              role: m.role,
+              content: m.content
+            })),
+            {
+              role: 'assistant',
+              content: '',
+              tool_calls: toolCalls
+            },
+            ...toolData.results
+          ]
+        })
+      });
+
+      if (!finalResponse.ok) {
+        throw new Error('最终回复生成失败');
+      }
+
+      const finalData = await finalResponse.json();
+
+      // 更新进度
+      setToolProgress(prev => ({
+        ...prev,
+        progress: '正在生成回复...',
+        step: 3
+      }));
+
+      // 生成语音（如果启用）
+      let audioUrl: string | undefined = undefined;
+      if (enableVoice && voiceSettings.autoPlay) {
+        const generatedUrl = await generateSpeech(finalData.message);
+        audioUrl = generatedUrl || undefined;
+      }
+
+      // 移除"正在处理..."消息，添加最终回复
+      setMessages(prev => {
+        const filtered = prev.filter(m => !m.isThinking);
+        return [...filtered, {
+          id: finalData.messageId,
+          role: 'assistant',
+          content: finalData.message,
+          timestamp: new Date(),
+          audioUrl,
+          toolCalls
+        }];
+      });
+
+      // 自动播放语音
+      if (audioUrl && voiceSettings.autoPlay) {
+        setTimeout(() => playAudio(audioUrl), 500);
+      }
+
+    } catch (error) {
+      console.error('工具调用失败:', error);
+      
+      // 移除"正在处理..."消息，显示错误信息
+      setMessages(prev => {
+        const filtered = prev.filter(m => !m.isThinking);
+        return [...filtered, {
+          id: Date.now().toString(),
+          role: 'assistant',
+          content: '抱歉，我在获取信息时遇到了问题。请稍后再试或换个方式提问。',
+          timestamp: new Date()
+        }];
+      });
+    }
+  }, [enableVoice, voiceSettings.autoPlay, generateSpeech, playAudio, getToolDisplayName]);
+
   // 发送消息
   const sendMessage = useCallback(async (content: string, isVoice = false) => {
     if (!content.trim() || isLoading) return;
@@ -167,6 +331,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     setIsLoading(true);
 
     try {
+      // 第一步：发送用户消息，检查是否需要工具调用
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -174,7 +339,8 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
           messages: [...messages, userMessage].map(m => ({
             role: m.role,
             content: m.content
-          }))
+          })),
+          tools: toolDefinitions // 包含工具定义
         })
       });
 
@@ -182,26 +348,13 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
 
       const data = await response.json();
       
-      // 生成语音（如果启用）
-      let audioUrl: string | undefined = undefined;
-      if (enableVoice && voiceSettings.autoPlay) {
-        const generatedUrl = await generateSpeech(data.message);
-        audioUrl = generatedUrl || undefined;
-      }
-
-      const assistantMessage: ChatMessage = {
-        id: data.messageId,
-        role: 'assistant',
-        content: data.message,
-        timestamp: new Date(),
-        audioUrl
-      };
-
-      setMessages(prev => [...prev, assistantMessage]);
-
-      // 自动播放语音
-      if (audioUrl && voiceSettings.autoPlay) {
-        setTimeout(() => playAudio(audioUrl), 500);
+      // 检查是否需要调用工具
+      if (data.requiresToolCalls && data.tool_calls && data.tool_calls.length > 0) {
+        // 显示工具调用进度
+        await handleToolCalls(data.tool_calls, [...messages, userMessage]);
+      } else {
+        // 直接回复，无需工具
+        await handleDirectResponse(data);
       }
 
     } catch (error) {
@@ -219,8 +372,14 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
       }
     } finally {
       setIsLoading(false);
+      setToolProgress({
+        isToolCalling: false,
+        progress: '',
+        step: 0,
+        totalSteps: 0
+      });
     }
-  }, [isLoading, messages, enableVoice, voiceSettings, generateSpeech, playAudio, onError]);
+  }, [isLoading, messages, onError, handleToolCalls, handleDirectResponse]);
 
   // 处理STT事件
   const handleSTTEvent = useCallback((event: StreamingSTTEvent) => {
@@ -397,6 +556,98 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     sendMessage(inputValue);
+  };
+
+  // 渲染消息组件
+  const renderMessage = (message: ChatMessage) => {
+    return (
+      <div
+        key={message.id}
+        className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'} animate-in fade-in slide-in-from-bottom-2 duration-300`}
+      >
+        <div className={`flex gap-3 max-w-[80%] ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+          {/* 头像 */}
+          <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 ${
+            message.role === 'user' 
+              ? 'bg-gradient-to-r from-blue-500 to-blue-600' 
+              : message.isThinking
+              ? 'bg-gradient-to-r from-blue-500 to-blue-600'
+              : 'bg-gradient-to-r from-orange-500 to-orange-600'
+          }`}>
+            {message.role === 'user' ? (
+              <span className="text-white text-sm font-medium">你</span>
+            ) : message.isThinking ? (
+              <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+            ) : (
+              <MessageCircle size={14} className="text-white" strokeWidth={2.5} />
+            )}
+          </div>
+          
+          {/* 消息气泡 */}
+          <div
+            className={`px-4 py-3 rounded-2xl text-sm leading-relaxed shadow-sm ${
+              message.role === 'user'
+                ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-br-md'
+                : message.isThinking
+                ? 'bg-blue-50 border border-blue-200 text-blue-800 rounded-bl-md'
+                : 'bg-white border border-gray-100 text-gray-800 rounded-bl-md'
+            }`}
+          >
+            <div className="whitespace-pre-wrap">{message.content}</div>
+            {message.isVoice && (
+              <span className="ml-2 inline-flex items-center">
+                <Mic size={12} className="opacity-75" />
+              </span>
+            )}
+            {message.toolCalls && (
+              <span className="ml-2 inline-flex items-center text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">
+                使用了工具
+              </span>
+            )}
+
+            {/* 工具调用进度显示 */}
+            {message.isThinking && toolProgress.isToolCalling && (
+              <div className="mt-3 p-3 bg-blue-100 rounded-lg">
+                <div className="flex items-center gap-2 text-sm text-blue-700 mb-2">
+                  <div className="animate-spin rounded-full h-3 w-3 border-2 border-blue-500 border-t-transparent"></div>
+                  <span>{toolProgress.currentTool}</span>
+                </div>
+                <div className="text-xs text-blue-600 mb-2">{toolProgress.progress}</div>
+                <div className="w-full bg-blue-200 rounded-full h-1.5">
+                  <div 
+                    className="bg-blue-500 h-1.5 rounded-full transition-all duration-300" 
+                    style={{ width: `${(toolProgress.step / toolProgress.totalSteps) * 100}%` }}
+                  ></div>
+                </div>
+              </div>
+            )}
+            
+            {/* 语音播放按钮（仅助手消息） */}
+            {message.role === 'assistant' && !message.isThinking && enableVoice && (
+              <div className="flex items-center space-x-2 mt-2 pt-2 border-t border-gray-200">
+                {message.audioUrl ? (
+                  <button
+                    onClick={() => playAudio(message.audioUrl!)}
+                    className="flex items-center space-x-1 text-xs text-gray-600 hover:text-orange-500 transition-colors"
+                  >
+                    <Volume2 size={12} />
+                    <span>播放</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => regenerateSpeech(message.id, message.content)}
+                    className="flex items-center space-x-1 text-xs text-gray-600 hover:text-orange-500 transition-colors"
+                  >
+                    <VolumeX size={12} />
+                    <span>生成语音</span>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
   };
 
   // 渲染实时转录显示组件
@@ -602,66 +853,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                   </p>
                 </div>
               ) : (
-                messages.map((message) => (
-                  <div
-                    key={message.id}
-                    className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'} animate-in fade-in slide-in-from-bottom-2 duration-300`}
-                  >
-                    <div className={`flex gap-3 max-w-[80%] ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-                      {/* 头像 */}
-                      <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 ${
-                        message.role === 'user' 
-                          ? 'bg-gradient-to-r from-blue-500 to-blue-600' 
-                          : 'bg-gradient-to-r from-orange-500 to-orange-600'
-                      }`}>
-                        {message.role === 'user' ? (
-                          <span className="text-white text-sm font-medium">你</span>
-                        ) : (
-                          <MessageCircle size={14} className="text-white" strokeWidth={2.5} />
-                        )}
-                      </div>
-                      
-                      {/* 消息气泡 */}
-                      <div
-                        className={`px-4 py-3 rounded-2xl text-sm leading-relaxed shadow-sm ${
-                          message.role === 'user'
-                            ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-br-md'
-                            : 'bg-white border border-gray-100 text-gray-800 rounded-bl-md'
-                        }`}
-                      >
-                        <div className="whitespace-pre-wrap">{message.content}</div>
-                        {message.isVoice && (
-                          <span className="ml-2 inline-flex items-center">
-                            <Mic size={12} className="opacity-75" />
-                          </span>
-                        )}
-                        
-                        {/* 语音播放按钮（仅助手消息） */}
-                        {message.role === 'assistant' && enableVoice && (
-                          <div className="flex items-center space-x-2 mt-2 pt-2 border-t border-gray-200">
-                            {message.audioUrl ? (
-                              <button
-                                onClick={() => playAudio(message.audioUrl!)}
-                                className="flex items-center space-x-1 text-xs text-gray-600 hover:text-orange-500 transition-colors"
-                              >
-                                <Volume2 size={12} />
-                                <span>播放</span>
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() => regenerateSpeech(message.id, message.content)}
-                                className="flex items-center space-x-1 text-xs text-gray-600 hover:text-orange-500 transition-colors"
-                              >
-                                <VolumeX size={12} />
-                                <span>生成语音</span>
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))
+                messages.map(renderMessage)
               )}
               {isLoading && (
                 <div className="flex justify-start animate-in fade-in duration-300">
