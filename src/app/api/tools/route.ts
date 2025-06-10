@@ -143,11 +143,7 @@ async function getGeoLocation(location: string, adm: string | undefined, token: 
     params.append('adm', adm);
   }
   
-  const response = await fetch(`https://geoapi.qweather.com/v2/city/lookup?${params}`, {
-    headers: {
-      'Authorization': `Bearer ${token}`
-    }
-  });
+  const response = await fetch(`https://geoapi.qweather.com/v2/city/lookup?${params}`);
   
   if (!response.ok) {
     throw new Error(`地理位置API请求失败: ${response.status}`);
@@ -164,12 +160,7 @@ async function getGeoLocation(location: string, adm: string | undefined, token: 
 // 实时天气
 async function getWeatherNow(lat: string, lon: string, token: string) {
   const response = await fetch(
-    `https://devapi.qweather.com/v7/weather/now?location=${lon},${lat}&key=${token}`,
-    {
-      headers: {
-        'Authorization': `Bearer ${token}`
-      }
-    }
+    `https://devapi.qweather.com/v7/weather/now?location=${lon},${lat}&key=${token}`
   );
   
   if (!response.ok) {
@@ -187,12 +178,7 @@ async function getWeatherNow(lat: string, lon: string, token: string) {
 // 空气质量
 async function getAirQuality(lat: string, lon: string, token: string) {
   const response = await fetch(
-    `https://devapi.qweather.com/airquality/v1/current/${lat}/${lon}?key=${token}`,
-    {
-      headers: {
-        'Authorization': `Bearer ${token}`
-      }
-    }
+    `https://devapi.qweather.com/v7/air/now?location=${lon},${lat}&key=${token}`
   );
   
   if (!response.ok) {
@@ -210,12 +196,7 @@ async function getAirQuality(lat: string, lon: string, token: string) {
 // 天气指数
 async function getWeatherIndices(lat: string, lon: string, token: string) {
   const response = await fetch(
-    `https://devapi.qweather.com/v7/indices/1d?type=1,2,3,5,8&location=${lon},${lat}&key=${token}`,
-    {
-      headers: {
-        'Authorization': `Bearer ${token}`
-      }
-    }
+    `https://devapi.qweather.com/v7/indices/1d?type=1,2,3,5,8&location=${lon},${lat}&key=${token}`
   );
   
   if (!response.ok) {
@@ -233,12 +214,7 @@ async function getWeatherIndices(lat: string, lon: string, token: string) {
 // 分钟级降水
 async function getMinutelyPrecipitation(lat: string, lon: string, token: string) {
   const response = await fetch(
-    `https://devapi.qweather.com/v7/minutely/5m?location=${lon},${lat}&key=${token}`,
-    {
-      headers: {
-        'Authorization': `Bearer ${token}`
-      }
-    }
+    `https://devapi.qweather.com/v7/minutely/5m?location=${lon},${lat}&key=${token}`
   );
   
   if (!response.ok) {

@@ -195,11 +195,7 @@ export interface ToolCall {
         params.append('adm', adm);
       }
       
-      const response = await fetch(`https://geoapi.qweather.com/v2/city/lookup?${params}`, {
-        headers: {
-          'Authorization': `Bearer ${this.QWEATHER_TOKEN}`
-        }
-      });
+      const response = await fetch(`https://geoapi.qweather.com/v2/city/lookup?${params}`);
       
       if (!response.ok) {
         throw new Error(`地理位置API请求失败: ${response.status}`);
@@ -216,12 +212,7 @@ export interface ToolCall {
     // 实时天气
     private static async getWeatherNow(lat: string, lon: string): Promise<WeatherNow> {
       const response = await fetch(
-        `https://devapi.qweather.com/v7/weather/now?location=${lon},${lat}&key=${this.QWEATHER_TOKEN}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${this.QWEATHER_TOKEN}`
-          }
-        }
+        `https://devapi.qweather.com/v7/weather/now?location=${lon},${lat}&key=${this.QWEATHER_TOKEN}`
       );
       
       if (!response.ok) {
@@ -239,12 +230,7 @@ export interface ToolCall {
     // 空气质量
     private static async getAirQuality(lat: string, lon: string): Promise<AirQuality> {
       const response = await fetch(
-        `https://devapi.qweather.com/airquality/v1/current/${lat}/${lon}?key=${this.QWEATHER_TOKEN}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${this.QWEATHER_TOKEN}`
-          }
-        }
+        `https://devapi.qweather.com/v7/air/now?location=${lon},${lat}&key=${this.QWEATHER_TOKEN}`
       );
       
       if (!response.ok) {
@@ -262,12 +248,7 @@ export interface ToolCall {
     // 天气指数
     private static async getWeatherIndices(lat: string, lon: string): Promise<WeatherIndex[]> {
       const response = await fetch(
-        `https://devapi.qweather.com/v7/indices/1d?type=1,2,3,5,8&location=${lon},${lat}&key=${this.QWEATHER_TOKEN}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${this.QWEATHER_TOKEN}`
-          }
-        }
+        `https://devapi.qweather.com/v7/indices/1d?type=1,2,3,5,8&location=${lon},${lat}&key=${this.QWEATHER_TOKEN}`
       );
       
       if (!response.ok) {
@@ -285,12 +266,7 @@ export interface ToolCall {
     // 分钟级降水
     private static async getMinutelyPrecipitation(lat: string, lon: string) {
       const response = await fetch(
-        `https://devapi.qweather.com/v7/minutely/5m?location=${lon},${lat}&key=${this.QWEATHER_TOKEN}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${this.QWEATHER_TOKEN}`
-          }
-        }
+        `https://devapi.qweather.com/v7/minutely/5m?location=${lon},${lat}&key=${this.QWEATHER_TOKEN}`
       );
       
       if (!response.ok) {
