@@ -1,6 +1,16 @@
 // src/app/api/chat/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { PageContext } from '@/types';
+import { PageContext } from '../../../types';
+
+interface SearchResult {
+  name: string;
+  url: string;
+  snippet: string;
+  summary?: string;
+  siteName: string;
+  datePublished?: string;
+  siteIcon?: string;
+}
 
 interface ChatMessage {
   role: 'user' | 'assistant' | 'system' | 'tool';
@@ -132,6 +142,58 @@ class PageContextProcessor {
   }
 }
 
+// 工具调用结果解析器
+class ToolResultProcessor {
+  // 检测消息中是否包含工具调用结果
+  static containsToolResults(messages: ChatMessage[]): boolean {
+    return messages.some(msg => 
+      msg.role === 'tool' || 
+      (msg.role === 'assistant' && msg.content === '')
+    );
+  }
+
+  // 从工具调用结果中提取搜索来源
+  static extractSearchSources(messages: ChatMessage[]): SearchResult[] {
+    const searchSources: SearchResult[] = [];
+    
+    messages.forEach(message => {
+      if (message.role === 'tool') {
+        try {
+          const toolData = JSON.parse(message.content);
+          
+          // 检查是否是搜索工具的结果
+          if (toolData.success && toolData.results && Array.isArray(toolData.results)) {
+            // 验证结果是否符合 SearchResult 格式
+            const validResults = toolData.results.filter((result: unknown) => 
+              result && 
+              typeof result === 'object' && 
+              result !== null &&
+              'name' in result &&
+              'url' in result &&
+              'snippet' in result &&
+              typeof (result as Record<string, unknown>).name === 'string' && 
+              typeof (result as Record<string, unknown>).url === 'string' && 
+              typeof (result as Record<string, unknown>).snippet === 'string'
+            );
+            
+            searchSources.push(...validResults);
+          }
+        } catch (e) {
+          // 忽略解析错误，继续处理其他消息
+          console.log('解析工具结果时出错:', e);
+        }
+      }
+    });
+    
+    // 去重并限制数量
+    const uniqueSources = searchSources.filter((source, index, self) => 
+      index === self.findIndex(s => s.url === source.url)
+    );
+    
+    return uniqueSources.slice(0, 10); // 最多返回10个来源
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { 
@@ -200,7 +262,17 @@ export async function POST(request: NextRequest) {
 
 当用户询问天气相关信息时，你可以使用 get_weather 工具来获取准确的天气数据。
 
-如果用户询问天气，请调用相应的工具获取最新信息，然后用自然语言为用户总结和解释结果。`;
+如果用户询问天气，请调用相应的工具获取最新信息，然后用自然语言为用户总结和解释结果。
+当用户询问最新信息、新闻、实时数据、当前事件、股价、汇率等需要最新数据的问题时，请使用 web_search 工具获取准确的实时信息。
+
+使用搜索的典型场景：
+- 最新新闻和时事
+- 股价、汇率、加密货币价格
+- 最新的产品发布信息
+- 实时统计数据
+- 你不确定或需要验证的信息
+
+请根据搜索结果为用户提供准确、及时的信息，并在回复中自然地提及信息来源。`;
 
     // 如果有页面上下文且用户询问页面相关问题，添加上下文信息
     if (pageContext) {
@@ -276,32 +348,47 @@ export async function POST(request: NextRequest) {
 
       // 检查是否需要调用工具
       if (message.tool_calls && message.tool_calls.length > 0) {
+        // 即使需要工具调用，也检查是否已有搜索结果
+        let searchSources: SearchResult[] = [];
+        if (ToolResultProcessor.containsToolResults(processedMessages)) {
+          searchSources = ToolResultProcessor.extractSearchSources(processedMessages);
+        }
+
         return NextResponse.json({
           message: message.content || '',
           messageId: data.id || Date.now().toString(),
           tool_calls: message.tool_calls,
           usage: data.usage,
           requiresToolCalls: true,
-                  // 添加上下文使用标记
-        contextUsed: pageContext ? PageContextProcessor.isPageRelatedQuestion(
-          processedMessages[processedMessages.length - 1]?.content || ''
-        ) : false,
-        pageInfo: pageContext ? {
-          title: pageContext.basic.title,
-          url: pageContext.basic.url,
-          type: pageContext.basic.type
-        } : null
+          searchSources: searchSources.length > 0 ? searchSources : undefined,
+          // 添加上下文使用标记
+          contextUsed: pageContext ? PageContextProcessor.isPageRelatedQuestion(
+            processedMessages[processedMessages.length - 1]?.content || ''
+          ) : false,
+          pageInfo: pageContext ? {
+            title: pageContext.basic.title,
+            url: pageContext.basic.url,
+            type: pageContext.basic.type
+          } : null
         });
       }
 
       // 正常回复
       const aiMessage = message.content || '抱歉，我无法生成回复。';
 
+      // 检查是否有工具调用结果，并提取搜索来源
+      let searchSources: SearchResult[] = [];
+      if (ToolResultProcessor.containsToolResults(processedMessages)) {
+        searchSources = ToolResultProcessor.extractSearchSources(processedMessages);
+        console.log('提取到搜索来源:', searchSources.length, '个');
+      }
+
       return NextResponse.json({
         message: aiMessage,
         messageId: data.id || Date.now().toString(),
         usage: data.usage,
         requiresToolCalls: false,
+        searchSources: searchSources.length > 0 ? searchSources : undefined,
         // 添加上下文使用标记
         contextUsed: pageContext ? PageContextProcessor.isPageRelatedQuestion(
           processedMessages[processedMessages.length - 1]?.content || ''

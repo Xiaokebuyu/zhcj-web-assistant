@@ -37,6 +37,29 @@ export interface ToolCall {
           required: ["location"]
         }
       }
+    },
+
+    {
+      type: "function",
+      function: {
+        name: "web_search",
+        description: "搜索网络上的最新信息，获取实时资讯、新闻、资料等。当用户询问最新信息、新闻、实时数据或你无法确定答案时使用此工具",
+        parameters: {
+          type: "object",
+          properties: {
+            query: {
+              type: "string",
+              description: "搜索关键词，例如：最新科技新闻、2024年人工智能发展、某某公司最新消息"
+            },
+            count: {
+              type: "number",
+              description: "返回结果数量，默认8条",
+              default: 8
+            }
+          },
+          required: ["query"]
+        }
+      }
     }
   ];
   

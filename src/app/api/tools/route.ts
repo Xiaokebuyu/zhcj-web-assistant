@@ -38,6 +38,9 @@ export async function POST(request: NextRequest) {
           case 'get_weather':
             result = await executeWeatherTool(toolCall.function.arguments);
             break;
+          case 'web_search':
+            result = await executeWebSearchTool(toolCall.function.arguments);
+            break;
           default:
             throw new Error(`未知工具: ${toolCall.function.name}`);
         }
@@ -229,6 +232,70 @@ async function getMinutelyPrecipitation(lat: string, lon: string, token: string)
   return data;
 }
 
+// 网络搜索工具执行函数
+async function executeWebSearchTool(argumentsStr: string) {
+  const args = JSON.parse(argumentsStr);
+  const { query, count = 8 } = args;
+  
+  const BOCHA_API_KEY = process.env.BOCHA_API_KEY;
+  
+  if (!BOCHA_API_KEY) {
+    throw new Error('博查AI搜索API密钥未配置');
+  }
+  
+  try {
+    const response = await fetch('https://api.bochaai.com/v1/web-search', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${BOCHA_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        query,
+        freshness: "oneYear", // 优先最近一年
+        summary: true,        // 返回长文本摘要
+        count: Math.min(count, 8) // 最多8条结果
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`搜索API请求失败: ${response.status}`);
+    }
+
+    const data = await response.json();
+    
+    if (data.code !== 200) {
+      throw new Error(`搜索失败: ${data.msg || '未知错误'}`);
+    }
+
+    // 提取搜索结果
+    const searchResults = data.data?.webPages?.value || [];
+    
+    return {
+      success: true,
+      query,
+      totalResults: data.data?.webPages?.totalEstimatedMatches || 0,
+      results: searchResults.map((item: unknown) => {
+        const webItem = item as Record<string, unknown>;
+        return {
+          name: (webItem.name as string) || '',
+          url: (webItem.url as string) || '',
+          snippet: (webItem.snippet as string) || '',
+          summary: (webItem.summary as string) || (webItem.snippet as string) || '',
+          siteName: (webItem.siteName as string) || '',
+          datePublished: (webItem.datePublished as string) || (webItem.dateLastCrawled as string) || '',
+          siteIcon: (webItem.siteIcon as string) || ''
+        };
+      }),
+      timestamp: new Date().toISOString()
+    };
+
+  } catch (error) {
+    console.error('网络搜索失败:', error);
+    throw new Error(`网络搜索失败: ${error instanceof Error ? error.message : '未知错误'}`);
+  }
+}
+
 // 支持OPTIONS请求（CORS预检）
 export async function OPTIONS() {
   return new Response(null, {
@@ -246,7 +313,7 @@ export async function GET() {
   return NextResponse.json({ 
     status: 'ok', 
     service: 'Tools API',
-    supportedTools: ['get_weather'],
+    supportedTools: ['get_weather','web_search'],
     timestamp: new Date().toISOString() 
   });
 }

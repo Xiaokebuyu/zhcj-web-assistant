@@ -1,8 +1,24 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { MessageCircle, X, Minus, Send, Mic, Volume2, VolumeX, Settings, Square, FileText, RefreshCw } from 'lucide-react';
+import { MessageCircle, X, Minus, Send, Mic, Volume2, VolumeX, Settings, Square, FileText, RefreshCw, Search } from 'lucide-react';
 import { ChatMessage, AssistantConfig, VoiceState, VoiceSettings, STTConfig, StreamingSTTEvent, ToolCall, ToolProgress, PageContext, ContextStatus, ChatRequest } from '@/types';
+
+// 本地类型定义
+interface SearchResult {
+  name: string;
+  url: string;
+  snippet: string;
+  summary?: string;
+  siteName: string;
+  datePublished?: string;
+  siteIcon?: string;
+}
+
+// 扩展 ChatMessage 接口
+interface ExtendedChatMessage extends ChatMessage {
+  searchSources?: SearchResult[];
+}
 import { StreamingSpeechRecognition } from '@/utils/streamingSpeechRecognition';
 import { toolDefinitions } from '@/utils/toolManager';
 
@@ -23,7 +39,7 @@ const VOICE_OPTIONS = [
 export default function FloatingAssistant({ config = {}, onError }: FloatingAssistantProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ExtendedChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -333,7 +349,8 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   // 获取工具显示名称
   const getToolDisplayName = useCallback((toolName: string): string => {
     const toolNames: Record<string, string> = {
-      'get_weather': '天气查询'
+      'get_weather': '天气查询',
+      'web_search': '网络搜索'
     };
     return toolNames[toolName] || toolName;
   }, []);
@@ -375,97 +392,45 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   // 转换为小写以进行不区分大小写的匹配
   const lowerMessage = message.toLowerCase();
   
-  // 页面直接引用关键词
+  // 页面直接引用关键词（精简版，减少误触发）
   const pageDirectKeywords = [
-    // 中文 - 直接指代
-    '这个页面', '当前页面', '这页', '本页', '此页面', '该页面',
-    '这个网页', '当前网页', '这个站点', '当前站点', '这个网站', '当前网站',
+    // 中文 - 明确的页面指代
+    '这个页面', '当前页面', '这个网页', '当前网页',
     
-    // 英文 - 直接指代
-    'this page', 'current page', 'this webpage', 'current webpage',
-    'this website', 'current website', 'this site', 'current site',
-    'the page', 'the website', 'the site', 'this web page'
+    // 英文 - 明确的页面指代
+    'this page', 'current page', 'this webpage', 'current webpage'
   ];
 
-  // 页面内容相关关键词
+  // 页面内容相关关键词（精简版，降低误触发）
   const pageContentKeywords = [
-    // 中文 - 内容相关
-    '页面内容', '页面信息', '网页内容', '网站内容', '站点内容',
-    '页面说什么', '页面讲什么', '页面写的什么', '网页说什么',
-    '这里写的什么', '这里说的什么', '这里讲的什么', '这里面说什么',
-    '页面主要内容', '网页主要内容', '主要讲什么', '主要说什么',
+    // 中文 - 明确指向页面内容的词汇
+    '页面内容', '页面信息', '网页内容', 
+    '页面说什么', '页面讲什么', '这里写的什么',
+    '页面主要内容', '网页主要内容',
     
-    // 英文 - 内容相关  
-    'page content', 'webpage content', 'website content', 'site content',
-    'page information', 'website information', 'page info', 'site info',
-    'what does this page say', 'what is this page about', 'page summary',
-    'website summary', 'site summary', 'content summary'
+    // 英文 - 明确指向页面内容的词汇
+    'page content', 'webpage content', 'page information',
+    'what does this page say', 'what is this page about', 'page summary'
   ];
 
-  // 页面分析相关关键词
+  // 页面分析相关关键词（精简版）
   const pageAnalysisKeywords = [
-    // 中文 - 分析相关
-    '总结页面', '分析页面', '解释页面', '介绍页面', '概括页面',
-    '总结这个', '分析这个', '解释这个', '介绍这个', '概括这个',
-    '页面概述', '网站概述', '内容概述', '整体介绍',
+    // 中文 - 明确的页面分析请求
+    '总结页面', '分析页面', '介绍页面',
+    '页面概述', '网站概述',
     
-    // 英文 - 分析相关
+    // 英文 - 明确的页面分析请求
     'summarize this page', 'analyze this page', 'explain this page',
-    'summarize this website', 'analyze this website', 'page overview',
-    'website overview', 'site overview', 'content overview',
-    'what is this page', 'what is this website', 'page description'
+    'page overview', 'what is this page'
   ];
 
-  // 项目/作品相关关键词
+  // 项目相关关键词（精简版）
   const projectKeywords = [
-    // 中文 - 项目相关
-    '这个项目', '当前项目', '这个作品', '这个应用', '这个系统',
-    '这个产品', '这个工具', '这个demo', '这个案例',
-    '项目介绍', '作品介绍', '产品介绍', '系统介绍',
+    // 中文 - 明确指向当前项目
+    '这个项目', '这个作品', '这个应用',
     
-    // 英文 - 项目相关
-    'this project', 'current project', 'this application', 'this app',
-    'this system', 'this product', 'this tool', 'this demo',
-    'project description', 'application description', 'system overview'
-  ];
-
-  // 文档/文章相关关键词
-  const documentKeywords = [
-    // 中文 - 文档相关
-    '这篇文章', '这个文档', '这份资料', '这个教程', '这个指南',
-    '文章内容', '文档内容', '教程内容', '资料内容',
-    '文章说什么', '文档讲什么', '教程讲什么',
-    
-    // 英文 - 文档相关
-    'this article', 'this document', 'this tutorial', 'this guide',
-    'article content', 'document content', 'tutorial content',
-    'what does this article say', 'article summary', 'document summary'
-  ];
-
-  // 上下文引用关键词
-  const contextKeywords = [
-    // 中文 - 上下文引用
-    '上面的内容', '前面的内容', '以上内容', '刚才的内容',
-    '这些内容', '这部分内容', '相关内容', '对应内容',
-    '基于这个', '根据这个', '结合这个', '参考这个',
-    
-    // 英文 - 上下文引用
-    'above content', 'previous content', 'this content', 'these contents',
-    'based on this', 'according to this', 'referring to this',
-    'in reference to', 'with regard to this'
-  ];
-
-  // 功能/特性相关关键词
-  const featureKeywords = [
-    // 中文 - 功能相关
-    '页面功能', '网站功能', '有什么功能', '功能特点', '主要功能',
-    '页面特色', '网站特色', '产品特色', '系统特色',
-    '怎么使用', '如何使用', '使用方法', '操作方法',
-    
-    // 英文 - 功能相关
-    'page features', 'website features', 'site features', 'page functions',
-    'what features', 'main features', 'key features', 'how to use',
-    'usage instructions', 'user guide', 'features overview'
+    // 英文 - 明确指向当前项目
+    'this project', 'this application', 'this app'
   ];
 
   // 合并所有关键词数组
@@ -473,10 +438,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     ...pageDirectKeywords,
     ...pageContentKeywords,
     ...pageAnalysisKeywords,
-    ...projectKeywords,
-    ...documentKeywords,
-    ...contextKeywords,
-    ...featureKeywords
+    ...projectKeywords
   ];
 
   // 检查是否包含任何关键词
@@ -491,6 +453,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     messageId: string;
     contextUsed?: boolean;
     pageInfo?: { title: string; url: string; type: string; };
+    searchSources?: SearchResult[];
   }) => {
     // 生成语音（如果启用）
     let audioUrl: string | undefined = undefined;
@@ -499,14 +462,15 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
       audioUrl = generatedUrl || undefined;
     }
 
-    const assistantMessage: ChatMessage = {
+    const assistantMessage: ExtendedChatMessage = {
       id: data.messageId,
       role: 'assistant',
       content: data.message,
       timestamp: new Date(),
       audioUrl,
       contextUsed: data.contextUsed,
-      pageInfo: data.pageInfo
+      pageInfo: data.pageInfo,
+      searchSources: data.searchSources
     };
 
     setMessages(prev => [...prev, assistantMessage]);
@@ -518,9 +482,9 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   }, [enableVoice, voiceSettings.autoPlay, generateSpeech, playAudio]);
 
   // 处理工具调用的函数
-  const handleToolCalls = useCallback(async (toolCalls: ToolCall[], conversationHistory: ChatMessage[]) => {
+  const handleToolCalls = useCallback(async (toolCalls: ToolCall[], conversationHistory: ExtendedChatMessage[]) => {
     // 显示"正在处理..."消息
-    const thinkingMessage: ChatMessage = {
+    const thinkingMessage: ExtendedChatMessage = {
       id: `thinking-${Date.now()}`,
       role: 'assistant',
       content: '正在为您查询相关信息...',
@@ -614,7 +578,8 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
           content: finalData.message,
           timestamp: new Date(),
           audioUrl,
-          toolCalls
+          toolCalls,
+          searchSources: finalData.searchSources // 添加搜索来源
         }];
       });
 
@@ -643,7 +608,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   const sendMessage = useCallback(async (content: string, isVoice = false) => {
     if (!content.trim() || isLoading) return;
 
-    const userMessage: ChatMessage = {
+    const userMessage: ExtendedChatMessage = {
       id: Date.now().toString(),
       role: 'user',
       content: content.trim(),
@@ -711,7 +676,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
 
     } catch (error) {
       console.error('发送消息失败:', error);
-      const errorMessage: ChatMessage = {
+      const errorMessage: ExtendedChatMessage = {
         id: Date.now().toString(),
         role: 'assistant',
         content: '抱歉，我现在无法回应。请稍后再试。',
@@ -911,7 +876,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   };
 
   // 渲染消息组件
-  const renderMessage = (message: ChatMessage) => {
+  const renderMessage = (message: ExtendedChatMessage) => {
     return (
       <div
         key={message.id}
@@ -956,6 +921,12 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                 使用了工具
               </span>
             )}
+            {message.searchSources && message.searchSources.length > 0 && (
+              <span className="ml-2 inline-flex items-center text-xs bg-purple-100 text-purple-600 px-2 py-0.5 rounded-full">
+                <Search size={10} className="mr-1" />
+                网络搜索
+              </span>
+            )}
             {message.contextUsed && message.pageInfo && (
               <span className="ml-2 inline-flex items-center text-xs bg-green-100 text-green-600 px-2 py-0.5 rounded-full">
                 <FileText size={10} className="mr-1" />
@@ -986,6 +957,55 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                 <div className="text-xs text-green-700 flex items-center gap-1">
                   <FileText size={12} />
                   <span>基于页面&ldquo;{message.pageInfo.title}&rdquo;的内容回答</span>
+                </div>
+              </div>
+            )}
+
+            {/* 显示搜索来源 */}
+            {message.searchSources && message.searchSources.length > 0 && (
+              <div className="mt-3 p-3 bg-gray-50 rounded-lg border">
+                <div className="flex items-center gap-2 mb-2">
+                  <Search size={16} className="text-gray-500" />
+                  <span className="text-sm font-medium text-gray-700">信息来源</span>
+                </div>
+                <div className="space-y-2">
+                  {message.searchSources.slice(0, 3).map((source, index) => (
+                    <div key={index} className="flex items-start gap-2">
+                      <div className="w-4 h-4 mt-0.5 flex-shrink-0">
+                        {source.siteIcon ? (
+                          <img src={source.siteIcon} alt="" className="w-4 h-4 rounded" />
+                        ) : (
+                          <div className="w-4 h-4 bg-gray-300 rounded"></div>
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <a 
+                          href={source.url} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-sm text-blue-600 hover:text-blue-800 line-clamp-1 block"
+                        >
+                          {source.name}
+                        </a>
+                        <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">
+                          {source.snippet}
+                        </p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-xs text-gray-400">{source.siteName}</span>
+                          {source.datePublished && (
+                            <span className="text-xs text-gray-400">
+                              {new Date(source.datePublished).toLocaleDateString('zh-CN')}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {message.searchSources.length > 3 && (
+                    <div className="text-xs text-gray-500 text-center pt-2">
+                      还有 {message.searchSources.length - 3} 个来源...
+                    </div>
+                  )}
                 </div>
               </div>
             )}
