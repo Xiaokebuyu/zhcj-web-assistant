@@ -1,20 +1,6 @@
 // src/app/api/tools/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-
-interface ToolCall {
-  id: string;
-  type: 'function';
-  function: {
-    name: string;
-    arguments: string;
-  };
-}
-
-interface ToolResult {
-  tool_call_id: string;
-  role: 'tool';
-  content: string;
-}
+import { ToolCall, ToolResult } from '@/types';
 
 export async function POST(request: NextRequest) {
   try {

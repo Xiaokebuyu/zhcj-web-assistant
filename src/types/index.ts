@@ -8,12 +8,38 @@ export interface ToolCall {
   };
 }
 
+export interface ToolResult {
+  tool_call_id: string;
+  role: 'tool';
+  content: string;
+}
+
 export interface ToolProgress {
   isToolCalling: boolean;
   currentTool?: string;
   progress: string;
   step: number;
   totalSteps: number;
+}
+
+// 搜索结果类型
+export interface SearchResult {
+  name: string;
+  url: string;
+  snippet: string;
+  summary?: string;
+  siteName: string;
+  datePublished?: string;
+  siteIcon?: string;
+}
+
+// 搜索响应类型
+export interface SearchResponse {
+  success: boolean;
+  results: SearchResult[];
+  query: string;
+  totalResults?: number;
+  error?: string;
 }
 
 // 页面上下文类型
@@ -67,6 +93,7 @@ export interface ChatMessage {
   toolCalls?: ToolCall[]; // 工具调用信息
   contextUsed?: boolean; // 是否使用了页面上下文
   pageInfo?: PageInfo; // 页面信息
+  searchSources?: SearchResult[]; // 新增：搜索来源
 }
 
 // 助手配置类型
