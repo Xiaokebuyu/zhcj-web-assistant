@@ -85,15 +85,6 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   const extractCurrentPageContext = useCallback(() => {
     try {
       console.log('开始提取当前页面上下文...');
-      
-      // 提取页面基本信息
-      const basicInfo = {
-        url: window.location.href,
-        title: document.title,
-        domain: window.location.hostname,
-        pathname: window.location.pathname,
-        timestamp: new Date().toISOString()
-      };
 
       // 提取meta信息
       const metaData: Record<string, string> = {};
@@ -377,22 +368,122 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
         setContextStatus('error');
       }
     }, 3000);
-  }, [enablePageContext, contextStatus]);
+  }, [enablePageContext, contextStatus, extractCurrentPageContext]);
 
   // 检测是否为页面相关问题
   const isPageRelatedQuestion = useCallback((message: string): boolean => {
-    const pageKeywords = [
-      '这个页面', '当前页面', '这页', '本页',
-      '总结页面', '页面内容', '页面说什么', '页面讲什么',
-      '这里写的什么', '这里说的什么', '这个网站',
-      '这个作品', '这个项目', '这篇文章',
-      '页面主要内容', '这个页面讲的是什么'
-    ];
+  // 转换为小写以进行不区分大小写的匹配
+  const lowerMessage = message.toLowerCase();
+  
+  // 页面直接引用关键词
+  const pageDirectKeywords = [
+    // 中文 - 直接指代
+    '这个页面', '当前页面', '这页', '本页', '此页面', '该页面',
+    '这个网页', '当前网页', '这个站点', '当前站点', '这个网站', '当前网站',
     
-    return pageKeywords.some(keyword => 
-      message.toLowerCase().includes(keyword.toLowerCase())
-    );
-  }, []);
+    // 英文 - 直接指代
+    'this page', 'current page', 'this webpage', 'current webpage',
+    'this website', 'current website', 'this site', 'current site',
+    'the page', 'the website', 'the site', 'this web page'
+  ];
+
+  // 页面内容相关关键词
+  const pageContentKeywords = [
+    // 中文 - 内容相关
+    '页面内容', '页面信息', '网页内容', '网站内容', '站点内容',
+    '页面说什么', '页面讲什么', '页面写的什么', '网页说什么',
+    '这里写的什么', '这里说的什么', '这里讲的什么', '这里面说什么',
+    '页面主要内容', '网页主要内容', '主要讲什么', '主要说什么',
+    
+    // 英文 - 内容相关  
+    'page content', 'webpage content', 'website content', 'site content',
+    'page information', 'website information', 'page info', 'site info',
+    'what does this page say', 'what is this page about', 'page summary',
+    'website summary', 'site summary', 'content summary'
+  ];
+
+  // 页面分析相关关键词
+  const pageAnalysisKeywords = [
+    // 中文 - 分析相关
+    '总结页面', '分析页面', '解释页面', '介绍页面', '概括页面',
+    '总结这个', '分析这个', '解释这个', '介绍这个', '概括这个',
+    '页面概述', '网站概述', '内容概述', '整体介绍',
+    
+    // 英文 - 分析相关
+    'summarize this page', 'analyze this page', 'explain this page',
+    'summarize this website', 'analyze this website', 'page overview',
+    'website overview', 'site overview', 'content overview',
+    'what is this page', 'what is this website', 'page description'
+  ];
+
+  // 项目/作品相关关键词
+  const projectKeywords = [
+    // 中文 - 项目相关
+    '这个项目', '当前项目', '这个作品', '这个应用', '这个系统',
+    '这个产品', '这个工具', '这个demo', '这个案例',
+    '项目介绍', '作品介绍', '产品介绍', '系统介绍',
+    
+    // 英文 - 项目相关
+    'this project', 'current project', 'this application', 'this app',
+    'this system', 'this product', 'this tool', 'this demo',
+    'project description', 'application description', 'system overview'
+  ];
+
+  // 文档/文章相关关键词
+  const documentKeywords = [
+    // 中文 - 文档相关
+    '这篇文章', '这个文档', '这份资料', '这个教程', '这个指南',
+    '文章内容', '文档内容', '教程内容', '资料内容',
+    '文章说什么', '文档讲什么', '教程讲什么',
+    
+    // 英文 - 文档相关
+    'this article', 'this document', 'this tutorial', 'this guide',
+    'article content', 'document content', 'tutorial content',
+    'what does this article say', 'article summary', 'document summary'
+  ];
+
+  // 上下文引用关键词
+  const contextKeywords = [
+    // 中文 - 上下文引用
+    '上面的内容', '前面的内容', '以上内容', '刚才的内容',
+    '这些内容', '这部分内容', '相关内容', '对应内容',
+    '基于这个', '根据这个', '结合这个', '参考这个',
+    
+    // 英文 - 上下文引用
+    'above content', 'previous content', 'this content', 'these contents',
+    'based on this', 'according to this', 'referring to this',
+    'in reference to', 'with regard to this'
+  ];
+
+  // 功能/特性相关关键词
+  const featureKeywords = [
+    // 中文 - 功能相关
+    '页面功能', '网站功能', '有什么功能', '功能特点', '主要功能',
+    '页面特色', '网站特色', '产品特色', '系统特色',
+    '怎么使用', '如何使用', '使用方法', '操作方法',
+    
+    // 英文 - 功能相关
+    'page features', 'website features', 'site features', 'page functions',
+    'what features', 'main features', 'key features', 'how to use',
+    'usage instructions', 'user guide', 'features overview'
+  ];
+
+  // 合并所有关键词数组
+  const allKeywords = [
+    ...pageDirectKeywords,
+    ...pageContentKeywords,
+    ...pageAnalysisKeywords,
+    ...projectKeywords,
+    ...documentKeywords,
+    ...contextKeywords,
+    ...featureKeywords
+  ];
+
+  // 检查是否包含任何关键词
+  return allKeywords.some(keyword => 
+    lowerMessage.includes(keyword.toLowerCase())
+  );
+}, []);
 
   // 处理直接回复的函数
   const handleDirectResponse = useCallback(async (data: { 

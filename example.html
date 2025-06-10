@@ -128,12 +128,12 @@
             <h1>AI助手集成示例</h1>
             <p>这是一个用于测试AI助手页面上下文功能的演示页面</p>
         </div>
-
+        
         <div class="content">
             <div class="section">
                 <h2>项目介绍</h2>
                 <p>这是一个智能AI助手项目，具有强大的页面上下文感知能力。助手能够理解当前页面的内容，并基于页面信息提供相关的帮助和回答。</p>
-                
+            
                 <div class="features">
                     <div class="feature-card">
                         <h3>智能对话</h3>
@@ -151,9 +151,9 @@
                         <h3>语音交互</h3>
                         <p>支持语音输入和语音播放，提供更自然的交互体验。</p>
                     </div>
-                </div>
             </div>
-
+        </div>
+        
             <div class="section">
                 <h2>功能特性</h2>
                 <ul>
@@ -171,20 +171,20 @@
                     <div>AI助手状态: <span id="assistantStatus" class="status loading">加载中</span></div>
                     <div>页面上下文: <span id="contextStatus" class="status loading">检测中</span></div>
                     <div>最后更新: <span id="lastUpdate">未更新</span></div>
-                </div>
-                
+        </div>
+        
                 <div style="margin: 15px 0;">
                     <button class="btn" onclick="testContextRequest()">测试上下文请求</button>
                     <button class="btn" onclick="showCurrentContext()">显示当前上下文</button>
                     <button class="btn warning" onclick="clearLogs()">清空日志</button>
                     <button class="btn success" onclick="askPageQuestion()">问页面相关问题</button>
-                </div>
-
+        </div>
+        
                 <div id="debugLogs" style="max-height: 300px; overflow-y: auto; background: #1a202c; padding: 10px; border-radius: 5px; margin-top: 10px;">
                     <div style="color: #4fd1c7;">调试日志将显示在这里...</div>
                 </div>
-            </div>
-
+        </div>
+        
             <div class="section">
                 <h2>测试用例</h2>
                 <p>你可以尝试问AI助手以下问题来测试页面上下文功能：</p>
@@ -194,7 +194,7 @@
                     <li>"这个页面有哪些功能特性？"</li>
                     <li>"页面的主要内容是什么？"</li>
                 </ul>
-            </div>
+        </div>
         </div>
     </div>
 
@@ -334,7 +334,7 @@
                     if (context) {
                         document.getElementById('contextStatus').textContent = '已准备';
                         document.getElementById('contextStatus').className = 'status ready';
-                    }
+                }
                 }
             }, 2000);
         });

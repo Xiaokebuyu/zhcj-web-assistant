@@ -34,7 +34,7 @@ class PageContextProcessor {
   static generateContextSystemMessage(pageContext: ChatRequest['pageContext']): string {
     if (!pageContext) return '';
 
-    const { basic, content, metadata, structure, extracted } = pageContext;
+    const { basic, metadata, structure, extracted } = pageContext;
     
     let contextMessage = `[页面上下文信息]\n`;
     
@@ -62,7 +62,7 @@ class PageContextProcessor {
     // 页面结构
     if (structure?.sections && structure.sections.length > 0) {
       contextMessage += `\n页面结构：\n`;
-      structure.sections.slice(0, 8).forEach((section, index) => {
+      structure.sections.slice(0, 8).forEach((section) => {
         contextMessage += `- ${section}\n`;
       });
     }
