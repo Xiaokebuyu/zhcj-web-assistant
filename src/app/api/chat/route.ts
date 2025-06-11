@@ -370,7 +370,7 @@ export async function POST(request: NextRequest) {
         }
 
         // 检查是否包含OpenManus工具调用
-        const hasOpenManusTools = message.tool_calls.some((toolCall: any) => 
+        const hasOpenManusTools = message.tool_calls.some((toolCall: { function: { name: string } }) => 
           toolCall.function.name.startsWith('openmanus_')
         );
 

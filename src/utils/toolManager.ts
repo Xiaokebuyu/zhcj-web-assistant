@@ -213,7 +213,7 @@ export interface ToolCall {
     task_description: string;
     agent_type?: string;
     tools?: string[];
-    context?: any;
+    context?: Record<string, unknown>;
     max_steps?: number;
   }
 

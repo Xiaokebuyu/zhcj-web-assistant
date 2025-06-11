@@ -353,4 +353,91 @@ export interface ExtendedToolProgress extends ToolProgress {
   isOpenManusTask?: boolean; // 是否为OpenManus任务
   openManusTaskId?: string; // OpenManus任务ID
   openManusStatus?: string; // OpenManus任务状态
+}
+
+// 豆包实时语音通话相关类型定义
+
+// 助手模式类型
+export type AssistantMode = 'text' | 'voice-call';
+
+// 语音通话连接状态
+export type VoiceCallConnectionStatus = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error';
+
+// 语音通话状态
+export interface VoiceCallState {
+  mode: AssistantMode;
+  isCallActive: boolean;
+  connectionStatus: VoiceCallConnectionStatus;
+  callDuration: number;
+  silenceTimer: number;
+  realtimeTranscript: string;
+  audioQuality: 'low' | 'medium' | 'high';
+  sessionId?: string;
+  lastActivity: number;
+}
+
+// 豆包语音配置
+export interface DoubaoVoiceConfig {
+  apiAppId: string;
+  apiAccessKey: string;
+  apiResourceId: string;
+  baseUrl: string;
+  callTimeout: number; // 8秒超时
+  silenceDetection: boolean;
+  audioConfig: {
+    inputSampleRate: number;
+    outputSampleRate: number;
+    channels: number;
+    format: string;
+    chunk: number;
+  };
+}
+
+// 实时转录事件
+export interface RealtimeTranscriptEvent {
+  type: 'transcript' | 'audio' | 'silence' | 'error' | 'end';
+  text?: string;
+  audio?: ArrayBuffer;
+  confidence?: number;
+  isFinal?: boolean;
+  error?: string; // 错误信息
+  timestamp: number;
+}
+
+// 语音通话会话信息
+export interface VoiceCallSession {
+  sessionId: string;
+  startTime: Date;
+  endTime?: Date;
+  status: 'active' | 'ended' | 'error';
+  transcripts: Array<{
+    text: string;
+    timestamp: number;
+    speaker: 'user' | 'assistant';
+  }>;
+}
+
+// 打字机效果组件属性
+export interface TypingEffectProps {
+  text: string;
+  speed?: number;
+  onComplete?: () => void;
+  cursor?: boolean;
+  className?: string;
+}
+
+// 音频可视化数据
+export interface AudioVisualizationData {
+  waveform: number[];
+  volume: number;
+  frequency: number[];
+}
+
+// WebSocket消息类型
+export interface DoubaoWebSocketMessage {
+  type: 'start' | 'audio' | 'transcript' | 'end' | 'error';
+  sessionId?: string;
+  data?: ArrayBuffer | string;
+  error?: string;
+  timestamp: number;
 } 

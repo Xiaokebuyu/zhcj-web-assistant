@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { MessageCircle, X, Minus, Send, Mic, Volume2, VolumeX, Settings, Square, FileText, RefreshCw, Search } from 'lucide-react';
-import { ChatMessage, AssistantConfig, VoiceState, VoiceSettings, STTConfig, StreamingSTTEvent, ToolCall, ToolProgress, PageContext, ContextStatus, ChatRequest } from '@/types';
+import { MessageCircle, X, Minus, Send, Mic, Volume2, VolumeX, Settings, Square, FileText, RefreshCw, Search, Phone } from 'lucide-react';
+import { ChatMessage, AssistantConfig, VoiceState, VoiceSettings, STTConfig, StreamingSTTEvent, ToolCall, ToolProgress, PageContext, ContextStatus, ChatRequest, AssistantMode, VoiceCallState, DoubaoVoiceConfig } from '@/types';
 
 // 本地类型定义
 interface SearchResult {
@@ -21,6 +21,8 @@ interface ExtendedChatMessage extends ChatMessage {
 }
 import { StreamingSpeechRecognition } from '@/utils/streamingSpeechRecognition';
 import { toolDefinitions } from '@/utils/toolManager';
+import { VoiceCallMode } from './VoiceCall/VoiceCallMode';
+import { VoiceCallManager } from '@/utils/voiceCallManager';
 
 interface FloatingAssistantProps {
   config?: AssistantConfig;
@@ -43,6 +45,22 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  
+  // 助手模式状态
+  const [assistantMode, setAssistantMode] = useState<AssistantMode>('text');
+  
+  // 语音通话状态
+  const [voiceCallState, setVoiceCallState] = useState<VoiceCallState>({
+    mode: 'text',
+    isCallActive: false,
+    connectionStatus: 'idle',
+    callDuration: 0,
+    silenceTimer: 0,
+    realtimeTranscript: '',
+    audioQuality: 'medium',
+    lastActivity: Date.now()
+  });
+  
   const [voiceState, setVoiceState] = useState<VoiceState>({
     isListening: false,
     isPlaying: false,
@@ -82,12 +100,32 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   // 语音识别实例
   const sttInstance = useRef<StreamingSpeechRecognition | null>(null);
   const transcriptTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // 语音通话管理器
+  const voiceCallManager = useRef<VoiceCallManager | null>(null);
 
   const {
     position = 'bottom-right',
     enableVoice = true,
     enablePageContext = true
   } = config;
+  
+  // 豆包语音配置
+  const doubaoVoiceConfig: DoubaoVoiceConfig = useMemo(() => ({
+    apiAppId: '2139817228', // 使用固定的豆包API配置
+    apiAccessKey: 'LMxFTYn2mmWwQwmLfT3ZbwS4yj0JPiMt',
+    apiResourceId: 'volc.speech.dialog',
+    baseUrl: '', // 这里将被动态设置
+    callTimeout: 8000, // 8秒超时
+    silenceDetection: true,
+    audioConfig: {
+      inputSampleRate: 16000,
+      outputSampleRate: 24000,
+      channels: 1,
+      format: 'pcm',
+      chunk: 3200
+    }
+  }), []);
 
   // STT配置
   const sttConfig: STTConfig = useMemo(() => ({
@@ -96,6 +134,168 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     interimResults: true,
     maxAlternatives: 1
   }), []);
+
+  // 语音通话状态更新回调
+  const handleVoiceCallStateChange = useCallback((newState: VoiceCallState) => {
+    setVoiceCallState(newState);
+  }, []);
+
+  // 实时转录更新回调
+  const handleTranscriptUpdate = useCallback((transcript: string) => {
+    // 更新实时转录状态
+    setVoiceCallState(prev => ({
+      ...prev,
+      realtimeTranscript: transcript
+    }));
+  }, []);
+
+  // 音频可视化数据回调
+  const handleVisualizationData = useCallback(() => {
+    // 可以在这里处理音频可视化数据
+    // 暂时不需要特殊处理
+  }, []);
+
+  // 开始语音通话
+  const startVoiceCall = useCallback(async () => {
+    if (voiceCallManager.current) {
+      console.warn('语音通话已在进行中');
+      return;
+    }
+
+    try {
+      console.log('正在启动语音通话...');
+      
+      // 先调用API开始会话
+      const response = await fetch('/api/voice/start', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          audioQuality: voiceCallState.audioQuality,
+          silenceDetection: true
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`启动语音通话失败: ${response.status} ${errorText}`);
+      }
+
+      const data = await response.json();
+      console.log('语音通话API响应:', data);
+      
+      if (!data.success || !data.sessionId || !data.wsUrl) {
+        throw new Error(data.error || '获取会话信息失败');
+      }
+
+      // 更新配置中的WebSocket URL
+      const updatedConfig: DoubaoVoiceConfig = {
+        ...doubaoVoiceConfig,
+        baseUrl: data.wsUrl
+      };
+
+      console.log('创建语音通话管理器，WebSocket URL:', data.wsUrl);
+
+      // 创建语音通话管理器
+      voiceCallManager.current = new VoiceCallManager(
+        updatedConfig,
+        data.sessionId,
+        handleVoiceCallStateChange,
+        handleTranscriptUpdate,
+        handleVisualizationData
+      );
+
+      // 开始通话
+      await voiceCallManager.current.startCall();
+      
+      // 切换到语音通话模式
+      setAssistantMode('voice-call');
+
+    } catch (error) {
+      console.error('开始语音通话失败:', error);
+      
+      let errorMessage = '语音通话启动失败';
+      if (error instanceof Error) {
+        if (error.message.includes('WebSocket')) {
+          errorMessage = '语音服务连接失败。由于浏览器安全限制，直接连接到豆包服务存在技术限制。建议：\n1. 检查网络连接\n2. 使用HTTPS访问\n3. 或联系开发者配置代理服务器';
+        } else if (error.message.includes('麦克风')) {
+          errorMessage = '麦克风访问失败。请检查浏览器权限设置，确保允许访问麦克风。';
+        } else {
+          errorMessage = error.message;
+        }
+      }
+      
+      if (onError) {
+        onError(new Error(errorMessage));
+      }
+      
+      // 重置状态
+      setVoiceCallState(prev => ({
+        ...prev,
+        connectionStatus: 'error',
+        isCallActive: false
+      }));
+      
+      // 清理管理器
+      if (voiceCallManager.current) {
+        voiceCallManager.current.dispose();
+        voiceCallManager.current = null;
+      }
+    }
+  }, [voiceCallState.audioQuality, doubaoVoiceConfig, handleVoiceCallStateChange, handleTranscriptUpdate, handleVisualizationData, onError]);
+
+  // 结束语音通话
+  const endVoiceCall = useCallback(async () => {
+    if (voiceCallManager.current) {
+      await voiceCallManager.current.endCall('user_hangup');
+      voiceCallManager.current = null;
+    }
+    
+    // 切换回文字模式
+    setAssistantMode('text');
+    
+    // 重置语音通话状态
+    setVoiceCallState({
+      mode: 'text',
+      isCallActive: false,
+      connectionStatus: 'idle',
+      callDuration: 0,
+      silenceTimer: 0,
+      realtimeTranscript: '',
+      audioQuality: 'medium',
+      lastActivity: Date.now()
+    });
+  }, []);
+
+  // 切换静音
+  const toggleVoiceCallMute = useCallback(() => {
+    if (voiceCallManager.current) {
+      voiceCallManager.current.toggleMute();
+    }
+  }, []);
+
+  // 切换暂停
+  const toggleVoiceCallPause = useCallback(() => {
+    if (voiceCallManager.current) {
+      voiceCallManager.current.togglePause();
+    }
+  }, []);
+
+  // 模式切换
+  const switchMode = useCallback((mode: AssistantMode) => {
+    if (mode === assistantMode) return;
+
+    if (mode === 'voice-call') {
+      startVoiceCall();
+    } else {
+      // 切换到文字模式
+      if (voiceCallManager.current) {
+        endVoiceCall();
+      }
+      setAssistantMode('text');
+    }
+  }, [assistantMode, startVoiceCall, endVoiceCall]);
 
   // 直接提取当前页面上下文的函数
   const extractCurrentPageContext = useCallback(() => {
@@ -521,7 +721,11 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     });
 
     try {
-      let allResults: any[] = [];
+      const allResults: Array<{
+        tool_call_id: string;
+        role: string;
+        content: string;
+      }> = [];
 
       // 如果有OpenManus工具，单独处理
       if (openManusTools.length > 0) {
@@ -895,8 +1099,20 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     }
 
     return () => {
+      // 清理语音通话资源
+      if (voiceCallManager.current) {
+        voiceCallManager.current.dispose();
+        voiceCallManager.current = null;
+      }
+      
+      // 清理STT资源
       if (sttInstance.current) {
         sttInstance.current.stop();
+      }
+      
+      // 清理转录超时
+      if (transcriptTimeoutRef.current) {
+        clearTimeout(transcriptTimeoutRef.current);
       }
     };
   }, [enableVoice, handleSTTEvent, sttConfig]);
@@ -1043,7 +1259,10 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                     <div key={index} className="flex items-start gap-2">
                       <div className="w-4 h-4 mt-0.5 flex-shrink-0">
                         {source.siteIcon ? (
-                          <img src={source.siteIcon} alt="" className="w-4 h-4 rounded" />
+                          <>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={source.siteIcon} alt="" className="w-4 h-4 rounded" />
+                          </>
                         ) : (
                           <div className="w-4 h-4 bg-gray-300 rounded"></div>
                         )}
@@ -1270,9 +1489,42 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
         <div className="flex items-center justify-between p-4 border-b border-gray-100 bg-gradient-to-r from-orange-50 to-amber-50">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 bg-gradient-to-r from-orange-500 to-orange-600 rounded-xl flex items-center justify-center">
-              <MessageCircle size={16} className="text-white" strokeWidth={2.5} />
+              {assistantMode === 'voice-call' ? (
+                <Phone size={16} className="text-white" strokeWidth={2.5} />
+              ) : (
+                <MessageCircle size={16} className="text-white" strokeWidth={2.5} />
+              )}
             </div>
-            <h3 className="font-semibold text-gray-800 text-lg">AI 助手</h3>
+            <div>
+              <h3 className="font-semibold text-gray-800 text-lg">AI 助手</h3>
+              {assistantMode === 'voice-call' && (
+                <div className="text-xs text-gray-600">豆包语音通话</div>
+              )}
+            </div>
+          </div>
+          
+          {/* 模式切换器 */}
+          <div className="flex items-center gap-1 bg-white rounded-lg p-1 shadow-sm">
+            <button
+              onClick={() => switchMode('text')}
+              className={`px-3 py-1 rounded-md text-xs font-medium transition-all duration-200 ${
+                assistantMode === 'text'
+                  ? 'bg-orange-100 text-orange-700 shadow-sm'
+                  : 'text-gray-600 hover:text-gray-800'
+              }`}
+            >
+              💬 文字
+            </button>
+            <button
+              onClick={() => switchMode('voice-call')}
+              className={`px-3 py-1 rounded-md text-xs font-medium transition-all duration-200 ${
+                assistantMode === 'voice-call'
+                  ? 'bg-orange-100 text-orange-700 shadow-sm'
+                  : 'text-gray-600 hover:text-gray-800'
+              }`}
+            >
+              📞 通话
+            </button>
           </div>
           <div className="flex gap-1">
             {enableVoice && (
@@ -1366,16 +1618,29 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
           </div>
         )}
 
-        {/* Anthropic 风格对话区域 */}
+        {/* 内容区域 */}
         {!isMinimized && (
           <>
-            <div className="flex-1 overflow-y-auto p-4 h-80 space-y-4 bg-gradient-to-b from-white to-gray-50/50">
-              {/* 页面上下文状态 */}
-              {renderContextStatus()}
-              
-              {/* 实时转录显示区域 */}
-              {renderTranscriptDisplay()}
-              {messages.length === 0 ? (
+            {assistantMode === 'voice-call' ? (
+              /* 语音通话模式 */
+              <VoiceCallMode
+                voiceCallState={voiceCallState}
+                onStartCall={startVoiceCall}
+                onEndCall={endVoiceCall}
+                onToggleMute={toggleVoiceCallMute}
+                onTogglePause={toggleVoiceCallPause}
+                className="flex-1"
+              />
+            ) : (
+              /* 文字对话模式 */
+              <>
+                <div className="flex-1 overflow-y-auto p-4 h-80 space-y-4 bg-gradient-to-b from-white to-gray-50/50">
+                  {/* 页面上下文状态 */}
+                  {renderContextStatus()}
+                  
+                  {/* 实时转录显示区域 */}
+                  {renderTranscriptDisplay()}
+                  {messages.length === 0 ? (
                 <div className="text-center py-8">
                   <div className="w-16 h-16 bg-gradient-to-r from-orange-100 to-amber-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
                     <MessageCircle size={24} className="text-orange-500" strokeWidth={2} />
@@ -1407,58 +1672,60 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                   </div>
                 </div>
               )}
-              <div ref={messagesEndRef} />
-            </div>
+                  <div ref={messagesEndRef} />
+                </div>
 
-            {/* Anthropic 风格输入区域 */}
-            <div className="border-t border-gray-100 p-4 bg-white">
-              <form onSubmit={handleSubmit} className="flex gap-3">
-                <div className="flex-1 relative">
-                  <input
-                    ref={inputRef}
-                    type="text"
-                    value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                    placeholder={pageContext ? "问我关于这个页面的任何问题..." : "输入消息..."}
-                    className="w-full px-4 py-3 border border-gray-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-300 transition-all duration-200 bg-gray-50/50 hover:bg-white"
-                    disabled={isLoading || voiceState.isListening}
-                  />
-                </div>
-                
-                <div className="flex gap-2">
-                  {enableVoice && (
-                    <button
-                      type="button"
-                      onClick={voiceState.isListening ? stopListening : startListening}
-                      disabled={isLoading && !voiceState.isListening}
-                      className={`p-3 rounded-2xl transition-all duration-200 ${
-                        voiceState.isListening
-                          ? 'bg-red-500 hover:bg-red-600 text-white animate-pulse'
-                          : 'bg-blue-500 hover:bg-blue-600 text-white'
-                      } ${
-                        (isLoading && !voiceState.isListening) ? 'opacity-50 cursor-not-allowed' : ''
-                      }`}
-                      aria-label="语音输入"
-                    >
-                      {voiceState.isListening ? (
-                        <Square size={18} strokeWidth={2} />
-                      ) : (
-                        <Mic size={18} strokeWidth={2} />
+                {/* Anthropic 风格输入区域 */}
+                <div className="border-t border-gray-100 p-4 bg-white">
+                  <form onSubmit={handleSubmit} className="flex gap-3">
+                    <div className="flex-1 relative">
+                      <input
+                        ref={inputRef}
+                        type="text"
+                        value={inputValue}
+                        onChange={(e) => setInputValue(e.target.value)}
+                        placeholder={pageContext ? "问我关于这个页面的任何问题..." : "输入消息..."}
+                        className="w-full px-4 py-3 border border-gray-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-300 transition-all duration-200 bg-gray-50/50 hover:bg-white"
+                        disabled={isLoading || voiceState.isListening}
+                      />
+                    </div>
+                    
+                    <div className="flex gap-2">
+                      {enableVoice && (
+                        <button
+                          type="button"
+                          onClick={voiceState.isListening ? stopListening : startListening}
+                          disabled={isLoading && !voiceState.isListening}
+                          className={`p-3 rounded-2xl transition-all duration-200 ${
+                            voiceState.isListening
+                              ? 'bg-red-500 hover:bg-red-600 text-white animate-pulse'
+                              : 'bg-blue-500 hover:bg-blue-600 text-white'
+                          } ${
+                            (isLoading && !voiceState.isListening) ? 'opacity-50 cursor-not-allowed' : ''
+                          }`}
+                          aria-label="语音输入"
+                        >
+                          {voiceState.isListening ? (
+                            <Square size={18} strokeWidth={2} />
+                          ) : (
+                            <Mic size={18} strokeWidth={2} />
+                          )}
+                        </button>
                       )}
-                    </button>
-                  )}
-                  
-                  <button
-                    type="submit"
-                    disabled={!inputValue.trim() || isLoading || voiceState.isListening}
-                    className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 disabled:from-gray-300 disabled:to-gray-400 text-white p-3 rounded-2xl transition-all duration-200 disabled:cursor-not-allowed shadow-lg shadow-orange-200/50 hover:shadow-orange-300/50"
-                    aria-label="发送消息"
-                  >
-                    <Send size={18} strokeWidth={2} />
-                  </button>
+                      
+                      <button
+                        type="submit"
+                        disabled={!inputValue.trim() || isLoading || voiceState.isListening}
+                        className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 disabled:from-gray-300 disabled:to-gray-400 text-white p-3 rounded-2xl transition-all duration-200 disabled:cursor-not-allowed shadow-lg shadow-orange-200/50 hover:shadow-orange-300/50"
+                        aria-label="发送消息"
+                      >
+                        <Send size={18} strokeWidth={2} />
+                      </button>
+                    </div>
+                  </form>
                 </div>
-              </form>
-            </div>
+              </>
+            )}
           </>
         )}
       </div>
