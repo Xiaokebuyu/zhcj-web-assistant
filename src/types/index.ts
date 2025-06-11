@@ -172,6 +172,7 @@ export interface ChatResponse {
   tool_calls?: ToolCall[]; // 工具调用数组
   contextUsed?: boolean; // 是否使用了页面上下文
   pageInfo?: PageInfo; // 页面信息
+  hasOpenManusTools?: boolean; // 是否包含OpenManus工具
 }
 
 // 错误类型
@@ -278,4 +279,78 @@ declare global {
 }
 
 // 页面上下文状态类型
-export type ContextStatus = 'loading' | 'ready' | 'error' | 'disabled'; 
+export type ContextStatus = 'loading' | 'ready' | 'error' | 'disabled';
+
+// OpenManus相关类型定义
+
+// OpenManus任务请求类型
+export interface OpenManusTaskRequest {
+  task_description: string;
+  agent_type?: string;
+  tools?: string[];
+  context?: unknown;
+  max_steps?: number;
+}
+
+// OpenManus任务响应类型
+export interface OpenManusTaskResponse {
+  task_id: string;
+  status: string;
+  result?: string;
+  error?: string;
+  steps_completed: number;
+  total_steps: number;
+  created_at: string;
+  updated_at: string;
+}
+
+// OpenManus任务状态类型
+export interface OpenManusTaskStatus {
+  task_id: string;
+  status: string;
+  progress: number; // 0.0 - 1.0
+  current_step?: string;
+  result?: string;
+  error?: string;
+}
+
+// OpenManus工具类型
+export interface OpenManusTool {
+  name: string;
+  description: string;
+}
+
+// OpenManus API响应类型
+export interface OpenManusAPIResponse<T = unknown> {
+  success: boolean;
+  data?: T;
+  error?: string;
+  message?: string;
+}
+
+// OpenManus健康检查响应
+export interface OpenManusHealthCheck {
+  status: 'healthy' | 'unhealthy';
+  openmanus_service?: {
+    status: string;
+    timestamp: string;
+    openmanus_dir: string;
+    manus_available: boolean;
+    active_instances: number;
+  };
+  error?: string;
+  timestamp: string;
+}
+
+// 扩展现有的ChatResponse类型
+export interface ExtendedChatResponse extends ChatResponse {
+  hasOpenManusTools?: boolean; // 是否包含OpenManus工具
+  openManusTaskId?: string; // OpenManus任务ID
+}
+
+// 扩展现有的ToolProgress类型
+export interface ExtendedToolProgress extends ToolProgress {
+  isOpenManusTask?: boolean; // 是否为OpenManus任务
+  openManusTaskId?: string; // OpenManus任务ID
+  openManusStatus?: string; // OpenManus任务状态
+} 

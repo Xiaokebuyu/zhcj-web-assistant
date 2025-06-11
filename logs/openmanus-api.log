@@ -1,0 +1,63 @@
+INFO:     Will watch for changes in these directories: ['/home/xiaobuyu/workplace/网页悬浮框助手/ai-assistant/openmanus-api-service']
+INFO:     Uvicorn running on http://127.0.0.1:8001 (Press CTRL+C to quit)
+INFO:     Started reloader process [903] using WatchFiles
+2025-06-11 21:36:17,539 - browser_use.telemetry.service - INFO - Anonymized telemetry enabled. See https://docs.browser-use.com/development/telemetry for more information.
+INFO:     Started server process [906]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     127.0.0.1:39706 - "GET /api/health HTTP/1.1" 200 OK
+2025-06-11 21:37:00,310 - main - INFO - 创建新任务: d6d7198e-a0a0-491e-b15b-29923d9c74b8 - 访问zhcj.cloud网站并获取页面标题
+INFO:     127.0.0.1:59972 - "POST /api/execute_task HTTP/1.1" 200 OK
+2025-06-11 21:37:41.896 | INFO     | main:get_or_create_manus_instance:105 - 为任务 d6d7198e-a0a0-491e-b15b-29923d9c74b8 创建了新的Manus实例
+2025-06-11 21:37:41.896 | INFO     | main:execute_openmanus_task:124 - 开始执行任务 d6d7198e-a0a0-491e-b15b-29923d9c74b8: 访问zhcj.cloud网站并获取页面标题
+2025-06-11 21:37:41.897 | INFO     | app.agent.base:run:140 - Executing step 1/20
+2025-06-11 21:39:11,508 - httpx - INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2025-06-11 21:39:11.514 | INFO     | app.llm:update_token_count:243 - Token usage: Input=2099, Completion=2673, Cumulative Input=2099, Cumulative Completion=2673, Total=4772, Cumulative Total=4772
+2025-06-11 21:39:11.515 | INFO     | app.agent.toolcall:think:81 - ✨ Manus's thoughts: 
+
+2025-06-11 21:39:11.515 | INFO     | app.agent.toolcall:think:82 - 🛠️ Manus selected 3 tools to use
+2025-06-11 21:39:11.515 | INFO     | app.agent.toolcall:think:86 - 🧰 Tools being prepared: ['browser_use', 'browser_use', 'browser_use']
+2025-06-11 21:39:11.516 | INFO     | app.agent.toolcall:think:89 - 🔧 Tool arguments: {"action":"go_to_url","url":"https://zhcj.cloud"}
+2025-06-11 21:39:11.517 | INFO     | app.agent.toolcall:execute_tool:180 - 🔧 Activating tool: 'browser_use'...
+2025-06-11 21:39:11.518 | INFO     | app.agent.toolcall:act:150 - 🎯 Tool 'browser_use' completed its mission! Result: Observed output of cmd `browser_use` executed:
+Error: Browser action 'go_to_url' failed: BaseModel.__init__() takes 1 positional argument but 2 were given
+2025-06-11 21:39:11.518 | INFO     | app.agent.toolcall:execute_tool:180 - 🔧 Activating tool: 'browser_use'...
+2025-06-11 21:39:11.518 | INFO     | app.agent.toolcall:act:150 - 🎯 Tool 'browser_use' completed its mission! Result: Observed output of cmd `browser_use` executed:
+Error: Browser action 'wait' failed: BaseModel.__init__() takes 1 positional argument but 2 were given
+2025-06-11 21:39:11.519 | INFO     | app.agent.toolcall:execute_tool:180 - 🔧 Activating tool: 'browser_use'...
+2025-06-11 21:39:11.519 | INFO     | app.agent.toolcall:act:150 - 🎯 Tool 'browser_use' completed its mission! Result: Observed output of cmd `browser_use` executed:
+Error: Browser action 'extract_content' failed: BaseModel.__init__() takes 1 positional argument but 2 were given
+2025-06-11 21:39:11.519 | INFO     | app.agent.base:run:140 - Executing step 2/20
+2025-06-11 21:39:46,184 - httpx - INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2025-06-11 21:39:46.189 | INFO     | app.llm:update_token_count:243 - Token usage: Input=2436, Completion=931, Cumulative Input=4535, Cumulative Completion=3604, Total=3367, Cumulative Total=8139
+2025-06-11 21:39:46.191 | INFO     | app.agent.toolcall:think:81 - ✨ Manus's thoughts: 
+
+2025-06-11 21:39:46.191 | INFO     | app.agent.toolcall:think:82 - 🛠️ Manus selected 1 tools to use
+2025-06-11 21:39:46.192 | INFO     | app.agent.toolcall:think:86 - 🧰 Tools being prepared: ['browser_use']
+2025-06-11 21:39:46.192 | INFO     | app.agent.toolcall:think:89 - 🔧 Tool arguments: {"action":"go_to_url","url":"https://zhcj.cloud"}
+2025-06-11 21:39:46.194 | INFO     | app.agent.toolcall:execute_tool:180 - 🔧 Activating tool: 'browser_use'...
+2025-06-11 21:39:46.196 | INFO     | app.agent.toolcall:act:150 - 🎯 Tool 'browser_use' completed its mission! Result: Observed output of cmd `browser_use` executed:
+Error: Browser action 'go_to_url' failed: BaseModel.__init__() takes 1 positional argument but 2 were given
+2025-06-11 21:39:46.197 | INFO     | app.agent.base:run:140 - Executing step 3/20
+2025-06-11 21:39:53,568 - httpx - INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2025-06-11 21:39:53.569 | INFO     | app.llm:update_token_count:243 - Token usage: Input=2749, Completion=186, Cumulative Input=7284, Cumulative Completion=3790, Total=2935, Cumulative Total=11074
+2025-06-11 21:39:53.569 | INFO     | app.agent.toolcall:think:81 - ✨ Manus's thoughts: 
+2025-06-11 21:39:53.570 | INFO     | app.agent.toolcall:think:82 - 🛠️ Manus selected 1 tools to use
+2025-06-11 21:39:53.570 | INFO     | app.agent.toolcall:think:86 - 🧰 Tools being prepared: ['browser_use']
+2025-06-11 21:39:53.570 | INFO     | app.agent.toolcall:think:89 - 🔧 Tool arguments:  {"action": "go_to_url", "url": "https://zhcj.cloud"}
+2025-06-11 21:39:53.571 | INFO     | app.agent.toolcall:execute_tool:180 - 🔧 Activating tool: 'browser_use'...
+2025-06-11 21:39:53.571 | INFO     | app.agent.toolcall:act:150 - 🎯 Tool 'browser_use' completed its mission! Result: Observed output of cmd `browser_use` executed:
+Error: Browser action 'go_to_url' failed: BaseModel.__init__() takes 1 positional argument but 2 were given
+2025-06-11 21:39:53.571 | INFO     | app.agent.base:run:140 - Executing step 4/20
+2025-06-11 21:39:59,167 - httpx - INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2025-06-11 21:39:59.170 | INFO     | app.llm:update_token_count:243 - Token usage: Input=3061, Completion=129, Cumulative Input=10345, Cumulative Completion=3919, Total=3190, Cumulative Total=14264
+2025-06-11 21:39:59.171 | INFO     | app.agent.toolcall:think:81 - ✨ Manus's thoughts: 
+2025-06-11 21:39:59.172 | INFO     | app.agent.toolcall:think:82 - 🛠️ Manus selected 1 tools to use
+2025-06-11 21:39:59.172 | INFO     | app.agent.toolcall:think:86 - 🧰 Tools being prepared: ['terminate']
+2025-06-11 21:39:59.173 | INFO     | app.agent.toolcall:think:89 - 🔧 Tool arguments: {"status":"failure"}
+2025-06-11 21:39:59.173 | INFO     | app.agent.toolcall:execute_tool:180 - 🔧 Activating tool: 'terminate'...
+2025-06-11 21:39:59.176 | INFO     | app.agent.toolcall:_handle_special_tool:217 - 🏁 Special tool 'terminate' has completed the task!
+2025-06-11 21:39:59.177 | INFO     | app.agent.toolcall:act:150 - 🎯 Tool 'terminate' completed its mission! Result: Observed output of cmd `terminate` executed:
+The interaction has been completed with status: failure
+2025-06-11 21:39:59.182 | INFO     | app.tool.mcp:disconnect:194 - Disconnected from all MCP servers
+2025-06-11 21:39:59.183 | INFO     | main:execute_openmanus_task:134 - 任务 d6d7198e-a0a0-491e-b15b-29923d9c74b8 执行完成

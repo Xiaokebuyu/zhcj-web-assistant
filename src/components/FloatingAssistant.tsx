@@ -350,7 +350,12 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   const getToolDisplayName = useCallback((toolName: string): string => {
     const toolNames: Record<string, string> = {
       'get_weather': '天气查询',
-      'web_search': '网络搜索'
+      'web_search': '网络搜索',
+      // OpenManus工具
+      'openmanus_web_automation': '网页自动化',
+      'openmanus_code_execution': '代码执行',
+      'openmanus_file_operations': '文件操作',
+      'openmanus_general_task': 'AI智能代理'
     };
     return toolNames[toolName] || toolName;
   }, []);
@@ -482,51 +487,112 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   }, [enableVoice, voiceSettings.autoPlay, generateSpeech, playAudio]);
 
   // 处理工具调用的函数
-  const handleToolCalls = useCallback(async (toolCalls: ToolCall[], conversationHistory: ExtendedChatMessage[]) => {
+  const handleToolCalls = useCallback(async (toolCalls: ToolCall[], conversationHistory: ExtendedChatMessage[], hasOpenManusTools = false) => {
+    // 检查是否包含OpenManus工具
+    const openManusTools = toolCalls.filter(tool => 
+      tool.function.name.startsWith('openmanus_')
+    );
+    const regularTools = toolCalls.filter(tool => 
+      !tool.function.name.startsWith('openmanus_')
+    );
+
     // 显示"正在处理..."消息
     const thinkingMessage: ExtendedChatMessage = {
       id: `thinking-${Date.now()}`,
       role: 'assistant',
-      content: '正在为您查询相关信息...',
+      content: hasOpenManusTools ? 
+        '正在启动OpenManus智能代理为您处理复杂任务...' : 
+        '正在为您查询相关信息...',
       timestamp: new Date(),
       isThinking: true
     };
     setMessages(prev => [...prev, thinkingMessage]);
 
     // 设置工具调用进度
+    const totalSteps = hasOpenManusTools ? 5 : 3; // OpenManus需要更多步骤
     setToolProgress({
       isToolCalling: true,
       currentTool: getToolDisplayName(toolCalls[0].function.name),
-      progress: '正在查询...',
+      progress: hasOpenManusTools ? 
+        '正在初始化OpenManus代理...' : 
+        '正在查询...',
       step: 1,
-      totalSteps: 3
+      totalSteps
     });
 
     try {
-      // 执行工具调用
-      const toolResponse = await fetch('/api/tools', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tool_calls: toolCalls
-        })
-      });
+      let allResults: any[] = [];
 
-      if (!toolResponse.ok) {
-        throw new Error('工具调用失败');
+      // 如果有OpenManus工具，单独处理
+      if (openManusTools.length > 0) {
+        setToolProgress(prev => ({
+          ...prev,
+          progress: '正在执行OpenManus任务...',
+          step: 2
+        }));
+
+        for (const openManusTool of openManusTools) {
+          const openManusResponse = await fetch('/api/tools', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              tool_calls: [openManusTool]
+            })
+          });
+
+          if (!openManusResponse.ok) {
+            throw new Error('OpenManus工具调用失败');
+          }
+
+          const openManusData = await openManusResponse.json();
+          if (openManusData.success && openManusData.results) {
+            allResults.push(...openManusData.results);
+          }
+        }
+
+        setToolProgress(prev => ({
+          ...prev,
+          progress: '正在处理OpenManus结果...',
+          step: 3
+        }));
       }
 
-      const toolData = await toolResponse.json();
-      
-      if (!toolData.success) {
-        throw new Error('工具执行失败');
+      // 处理常规工具
+      if (regularTools.length > 0) {
+        setToolProgress(prev => ({
+          ...prev,
+          progress: '正在执行常规工具...',
+          step: hasOpenManusTools ? 4 : 2
+        }));
+
+        const toolResponse = await fetch('/api/tools', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tool_calls: regularTools
+          })
+        });
+
+        if (!toolResponse.ok) {
+          throw new Error('工具调用失败');
+        }
+
+        const toolData = await toolResponse.json();
+        
+        if (!toolData.success) {
+          throw new Error('工具执行失败');
+        }
+
+        if (toolData.results) {
+          allResults.push(...toolData.results);
+        }
       }
 
       // 更新进度
       setToolProgress(prev => ({
         ...prev,
         progress: '正在分析结果...',
-        step: 2
+        step: hasOpenManusTools ? 5 : 3
       }));
 
       // 第二步：将工具结果发送给AI进行整合
@@ -544,7 +610,11 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
               content: '',
               tool_calls: toolCalls
             },
-            ...toolData.results
+            ...allResults.map(result => ({
+              role: result.role,
+              content: result.content,
+              tool_call_id: result.tool_call_id
+            }))
           ]
         })
       });
@@ -668,7 +738,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
       // 检查是否需要调用工具
       if (data.requiresToolCalls && data.tool_calls && data.tool_calls.length > 0) {
         // 显示工具调用进度
-        await handleToolCalls(data.tool_calls, [...messages, userMessage]);
+        await handleToolCalls(data.tool_calls, [...messages, userMessage], data.hasOpenManusTools);
       } else {
         // 直接回复，无需工具
         await handleDirectResponse(data);

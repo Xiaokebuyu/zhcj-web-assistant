@@ -1,4 +1,5 @@
 // src/utils/toolManager.ts
+// 集成了OpenManus AI代理功能的工具管理器
 
 export interface ToolCall {
     id: string;
@@ -60,6 +61,98 @@ export interface ToolCall {
           required: ["query"]
         }
       }
+    },
+
+    // OpenManus工具定义
+    {
+      type: "function",
+      function: {
+        name: "openmanus_web_automation",
+        description: "网页自动化操作，包括数据抓取、表单填写、页面交互等。适用于需要与网页进行复杂交互的任务",
+        parameters: {
+          type: "object",
+          properties: {
+            task_description: {
+              type: "string",
+              description: "详细的任务描述，例如：抓取某网站的产品信息、自动填写表单、下载文件等"
+            },
+            url: {
+              type: "string",
+              description: "目标网页URL（可选）"
+            }
+          },
+          required: ["task_description"]
+        }
+      }
+    },
+
+    {
+      type: "function",
+      function: {
+        name: "openmanus_code_execution",
+        description: "执行Python代码进行数据分析、计算、文件处理等。适用于需要编程解决的复杂任务",
+        parameters: {
+          type: "object",
+          properties: {
+            task_description: {
+              type: "string",
+              description: "详细的任务描述，例如：分析CSV数据、生成图表、数据处理、算法实现等"
+            },
+            code_type: {
+              type: "string",
+              description: "代码类型：data_analysis（数据分析）、file_processing（文件处理）、calculation（计算）、visualization（可视化）",
+              enum: ["data_analysis", "file_processing", "calculation", "visualization"]
+            }
+          },
+          required: ["task_description"]
+        }
+      }
+    },
+
+    {
+      type: "function",
+      function: {
+        name: "openmanus_file_operations",
+        description: "文件操作，包括文件读写、编辑、格式转换等。适用于需要处理文件的任务",
+        parameters: {
+          type: "object",
+          properties: {
+            task_description: {
+              type: "string",
+              description: "详细的任务描述，例如：编辑配置文件、转换文件格式、批量重命名等"
+            },
+            operation_type: {
+              type: "string",
+              description: "操作类型：read（读取）、write（写入）、edit（编辑）、convert（转换）",
+              enum: ["read", "write", "edit", "convert"]
+            }
+          },
+          required: ["task_description"]
+        }
+      }
+    },
+
+    {
+      type: "function",
+      function: {
+        name: "openmanus_general_task",
+        description: "通用的智能任务处理，适用于复杂的多步骤任务或需要AI智能决策的场景",
+        parameters: {
+          type: "object",
+          properties: {
+            task_description: {
+              type: "string",
+              description: "详细的任务描述，OpenManus将自动分析并执行"
+            },
+            complexity: {
+              type: "string",
+              description: "任务复杂度：simple（简单）、medium（中等）、complex（复杂）",
+              enum: ["simple", "medium", "complex"]
+            }
+          },
+          required: ["task_description"]
+        }
+      }
     }
   ];
   
@@ -115,9 +208,30 @@ export interface ToolCall {
     text: string;
   }
   
+  // OpenManus任务类型定义
+  export interface OpenManusTaskRequest {
+    task_description: string;
+    agent_type?: string;
+    tools?: string[];
+    context?: any;
+    max_steps?: number;
+  }
+
+  export interface OpenManusTaskResponse {
+    task_id: string;
+    status: string;
+    result?: string;
+    error?: string;
+    steps_completed: number;
+    total_steps: number;
+    created_at: string;
+    updated_at: string;
+  }
+
   // 工具执行器
   export class ToolExecutor {
     private static readonly QWEATHER_TOKEN = process.env.QWEATHER_API_KEY;
+    private static readonly OPENMANUS_API_URL = 'http://127.0.0.1:8001';
     
     static async executeTools(toolCalls: ToolCall[]): Promise<ToolResult[]> {
       const results: ToolResult[] = [];
@@ -129,6 +243,18 @@ export interface ToolCall {
           switch (toolCall.function.name) {
             case 'get_weather':
               result = await this.getWeather(toolCall.function.arguments);
+              break;
+            case 'openmanus_web_automation':
+              result = await this.executeOpenManusTask(toolCall.function.arguments, 'web_automation');
+              break;
+            case 'openmanus_code_execution':
+              result = await this.executeOpenManusTask(toolCall.function.arguments, 'code_execution');
+              break;
+            case 'openmanus_file_operations':
+              result = await this.executeOpenManusTask(toolCall.function.arguments, 'file_operations');
+              break;
+            case 'openmanus_general_task':
+              result = await this.executeOpenManusTask(toolCall.function.arguments, 'general');
               break;
             default:
               throw new Error(`未知工具: ${toolCall.function.name}`);
@@ -302,5 +428,79 @@ export interface ToolCall {
       }
       
       return data;
+    }
+
+    // OpenManus任务执行
+    static async executeOpenManusTask(argumentsStr: string, taskType: string): Promise<object> {
+      const args = JSON.parse(argumentsStr);
+      const { task_description, ...otherArgs } = args;
+      
+      try {
+        // 创建任务请求
+        const taskRequest: OpenManusTaskRequest = {
+          task_description,
+          agent_type: 'manus',
+          max_steps: 20,
+          ...otherArgs
+        };
+
+        // 发送任务到OpenManus API
+        const response = await fetch(`${this.OPENMANUS_API_URL}/api/execute_task`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(taskRequest)
+        });
+
+        if (!response.ok) {
+          throw new Error(`OpenManus API请求失败: ${response.status}`);
+        }
+
+        const taskResponse: OpenManusTaskResponse = await response.json();
+        const taskId = taskResponse.task_id;
+
+        // 轮询任务状态，直到完成
+        let attempts = 0;
+        const maxAttempts = 60; // 最多等待5分钟
+        
+        while (attempts < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, 5000)); // 等待5秒
+          
+          const statusResponse = await fetch(`${this.OPENMANUS_API_URL}/api/task_status/${taskId}`);
+          
+          if (!statusResponse.ok) {
+            throw new Error(`获取任务状态失败: ${statusResponse.status}`);
+          }
+          
+          const status = await statusResponse.json();
+          
+          if (status.status === 'completed') {
+            return {
+              success: true,
+              task_type: taskType,
+              task_id: taskId,
+              result: status.result,
+              progress: status.progress,
+              timestamp: new Date().toISOString()
+            };
+          } else if (status.status === 'failed') {
+            throw new Error(`OpenManus任务执行失败: ${status.error}`);
+          }
+          
+          attempts++;
+        }
+        
+        throw new Error('OpenManus任务执行超时');
+        
+      } catch (error) {
+        console.error('OpenManus任务执行错误:', error);
+        return {
+          success: false,
+          task_type: taskType,
+          error: error instanceof Error ? error.message : '任务执行失败',
+          timestamp: new Date().toISOString()
+        };
+      }
     }
   }
