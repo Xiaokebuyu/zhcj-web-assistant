@@ -22,14 +22,13 @@ const JSON_SERIALIZATION = 0b0001;
 const GZIP = 0b0001;
 
 /**
- * 豆包实时语音客户端
- * 实现WebSocket协议与豆包语音服务的通信
+ * 豆包实时语音客户端 - 代理连接版本
+ * 通过WebSocket代理服务器与豆包服务通信
  */
 export class DoubaoVoiceClient {
   private ws: WebSocket | null = null;
   private config: DoubaoVoiceConfig;
   private sessionId: string;
-  private logId: string = '';
   private isConnected: boolean = false;
   private onEvent: (event: RealtimeTranscriptEvent) => void;
 
@@ -40,156 +39,11 @@ export class DoubaoVoiceClient {
   }
 
   /**
-   * 生成协议头部 - 修复版本
-   */
-  private generateHeader(
-    version = PROTOCOL_VERSION,
-    messageType = CLIENT_FULL_REQUEST,
-    messageTypeSpecificFlags = MSG_WITH_EVENT,
-    serialMethod = JSON_SERIALIZATION,
-    compressionType = GZIP,
-    reservedData = 0x00,
-    extensionHeader = new Uint8Array()
-  ): Uint8Array {
-    // 修复：header size 应该是字节数而不是4字节单位数
-    const header = new Uint8Array(4 + extensionHeader.length);
-    const headerSize = 1; // 固定为1，表示4字节的基础头部
-    
-    header[0] = (version << 4) | headerSize;  // 版本 + 头部大小
-    header[1] = (messageType << 4) | messageTypeSpecificFlags;  // 消息类型 + 标志
-    header[2] = (serialMethod << 4) | compressionType;  // 序列化 + 压缩
-    header[3] = reservedData;  // 保留字段
-    
-    if (extensionHeader.length > 0) {
-      header.set(extensionHeader, 4);
-    }
-    
-    return header;
-  }
-
-  /**
-   * 压缩数据 - 修复版本，兼容性更好
-   */
-  private async compressData(data: Uint8Array): Promise<Uint8Array> {
-    try {
-      // 优先使用CompressionStream（较新的浏览器）
-      if ('CompressionStream' in window) {
-        const stream = new CompressionStream('gzip');
-        const writer = stream.writable.getWriter();
-        const reader = stream.readable.getReader();
-        
-        // 写入数据
-        await writer.write(data);
-        await writer.close();
-        
-        // 读取压缩后的数据
-        const chunks: Uint8Array[] = [];
-        let done = false;
-        
-        while (!done) {
-          const { value, done: streamDone } = await reader.read();
-          done = streamDone;
-          if (value) {
-            chunks.push(value);
-          }
-        }
-        
-        // 合并chunks
-        const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-        const result = new Uint8Array(totalLength);
-        let offset = 0;
-        for (const chunk of chunks) {
-          result.set(chunk, offset);
-          offset += chunk.length;
-        }
-        
-        return result;
-      } 
-      // 降级方案：如果不支持CompressionStream，返回原始数据
-      else {
-        console.warn('CompressionStream not supported, sending uncompressed data');
-        // 添加简单的标记，表明这是未压缩的数据
-        return data;
-      }
-    } catch (error) {
-      console.error('Compression failed:', error);
-      // 压缩失败时返回原始数据
-      return data;
-    }
-  }
-
-  /**
-   * 解压数据 - 修复版本
-   */
-  private async decompressData(data: Uint8Array): Promise<Uint8Array> {
-    try {
-      if ('DecompressionStream' in window) {
-        const stream = new DecompressionStream('gzip');
-        const writer = stream.writable.getWriter();
-        const reader = stream.readable.getReader();
-        
-        await writer.write(data);
-        await writer.close();
-        
-        const chunks: Uint8Array[] = [];
-        let done = false;
-        
-        while (!done) {
-          const { value, done: streamDone } = await reader.read();
-          done = streamDone;
-          if (value) {
-            chunks.push(value);
-          }
-        }
-        
-        const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-        const result = new Uint8Array(totalLength);
-        let offset = 0;
-        for (const chunk of chunks) {
-          result.set(chunk, offset);
-          offset += chunk.length;
-        }
-        
-        return result;
-      } else {
-        // 如果不支持DecompressionStream，假设数据未压缩
-        return data;
-      }
-    } catch (error) {
-      console.error('Decompression failed:', error);
-      // 解压失败时返回原始数据
-      return data;
-    }
-  }
-
-  /**
-   * 将字符串转换为Uint8Array
-   */
-  private stringToUint8Array(str: string): Uint8Array {
-    return new TextEncoder().encode(str);
-  }
-
-  /**
-   * 将数字转换为4字节大端序数组
-   */
-  private numberToBytes(num: number): Uint8Array {
-    const buffer = new ArrayBuffer(4);
-    const view = new DataView(buffer);
-    view.setUint32(0, num, false); // false表示大端序
-    return new Uint8Array(buffer);
-  }
-
-  /**
-   * 建立WebSocket连接 - 修复版本
+   * 连接到代理服务器
    */
   async connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
-        if (!this.config.baseUrl) {
-          reject(new Error('WebSocket URL配置缺失'));
-          return;
-        }
-
         console.log('正在连接WebSocket代理服务器:', this.config.baseUrl);
         
         this.ws = new WebSocket(this.config.baseUrl);
@@ -197,14 +51,16 @@ export class DoubaoVoiceClient {
 
         let isInitialized = false;
 
-        this.ws.onopen = async () => {
-          console.log('WebSocket代理连接已建立，等待豆包服务连接...');
+        this.ws.onopen = () => {
+          console.log('WebSocket代理连接已建立，等待豆包服务初始化...');
         };
 
         this.ws.onmessage = async (event) => {
           try {
             if (typeof event.data === 'string') {
+              // JSON消息处理
               const message = JSON.parse(event.data);
+              console.log('收到代理服务器消息:', message.type);
               
               switch (message.type) {
                 case 'connected':
@@ -228,7 +84,8 @@ export class DoubaoVoiceClient {
                   break;
               }
             } else {
-              // 处理豆包的二进制响应
+              // 二进制消息处理（豆包响应数据）
+              console.log('收到豆包二进制响应，大小:', event.data.byteLength);
               await this.handleMessage(event.data);
             }
           } catch (error) {
@@ -252,11 +109,11 @@ export class DoubaoVoiceClient {
 
         // 连接超时
         setTimeout(() => {
-          if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
+          if (!isInitialized && this.ws && this.ws.readyState === WebSocket.CONNECTING) {
             this.ws.close();
             reject(new Error('WebSocket连接超时'));
           }
-        }, 10000);
+        }, 15000); // 15秒超时
 
       } catch (error) {
         reject(error);
@@ -265,14 +122,7 @@ export class DoubaoVoiceClient {
   }
 
   /**
-   * 生成连接ID
-   */
-  private generateConnectId(): string {
-    return Date.now().toString() + Math.random().toString(36).substr(2, 9);
-  }
-
-  /**
-   * 发送音频数据
+   * 发送音频数据到代理服务器
    */
   async sendAudio(audioData: ArrayBuffer): Promise<void> {
     if (!this.ws || !this.isConnected) {
@@ -281,21 +131,20 @@ export class DoubaoVoiceClient {
     }
 
     try {
-      console.log('准备发送音频数据，大小:', audioData.byteLength);
+      console.log('准备发送音频数据到代理服务器，大小:', audioData.byteLength);
       
+      // 生成豆包协议格式的音频消息
       const header = this.generateHeader(
         PROTOCOL_VERSION,
-        CLIENT_AUDIO_ONLY_REQUEST,  // 使用音频专用类型
+        CLIENT_AUDIO_ONLY_REQUEST,
         MSG_WITH_EVENT,
-        NO_SERIALIZATION,  // 音频数据不需要JSON序列化
+        NO_SERIALIZATION,
         GZIP
       );
       
       const sessionIdBytes = this.stringToUint8Array(this.sessionId);
       const audioBytes = new Uint8Array(audioData);
       const compressedAudio = await this.compressData(audioBytes);
-      
-      console.log('音频数据压缩前大小:', audioBytes.length, '压缩后大小:', compressedAudio.length);
       
       const message = new Uint8Array(
         header.length + 4 + 4 + sessionIdBytes.length + 4 + compressedAudio.length
@@ -305,7 +154,7 @@ export class DoubaoVoiceClient {
       message.set(header, offset);
       offset += header.length;
       
-      message.set(this.numberToBytes(200), offset); // task request
+      message.set(this.numberToBytes(200), offset); // Task request
       offset += 4;
       
       message.set(this.numberToBytes(sessionIdBytes.length), offset);
@@ -321,7 +170,7 @@ export class DoubaoVoiceClient {
       
       if (this.ws.readyState === WebSocket.OPEN) {
         this.ws.send(message);
-        console.log('音频数据已发送，总消息大小:', message.length);
+        console.log('音频数据已发送到代理服务器，总消息大小:', message.length);
       } else {
         console.warn('WebSocket连接状态异常:', this.ws.readyState);
       }
@@ -336,26 +185,165 @@ export class DoubaoVoiceClient {
   }
 
   /**
+   * 生成协议头部
+   */
+  private generateHeader(
+    version = PROTOCOL_VERSION,
+    messageType = CLIENT_AUDIO_ONLY_REQUEST,
+    messageTypeSpecificFlags = MSG_WITH_EVENT,
+    serialMethod = NO_SERIALIZATION,
+    compressionType = GZIP,
+    reservedData = 0x00,
+    extensionHeader = new Uint8Array()
+  ): Uint8Array {
+    // 正确计算headerSize
+    const headerSize = Math.floor(extensionHeader.length / 4) + 1;
+    const header = new Uint8Array(headerSize * 4);
+    
+    header[0] = (version << 4) | headerSize;
+    header[1] = (messageType << 4) | messageTypeSpecificFlags;
+    header[2] = (serialMethod << 4) | compressionType;
+    header[3] = reservedData;
+    
+    if (extensionHeader.length > 0) {
+      header.set(extensionHeader, 4);
+    }
+    
+    return header;
+  }
+
+  /**
+   * 压缩数据
+   */
+  private async compressData(data: Uint8Array): Promise<Uint8Array> {
+    try {
+      if ('CompressionStream' in window) {
+        const compressionStream = new CompressionStream('gzip');
+        const writer = compressionStream.writable.getWriter();
+        const reader = compressionStream.readable.getReader();
+        
+        writer.write(data);
+        writer.close();
+        
+        const chunks: Uint8Array[] = [];
+        let done = false;
+        
+        while (!done) {
+          const { value, done: streamDone } = await reader.read();
+          done = streamDone;
+          if (value) {
+            chunks.push(value);
+          }
+        }
+        
+        const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+        const result = new Uint8Array(totalLength);
+        let offset = 0;
+        for (const chunk of chunks) {
+          result.set(chunk, offset);
+          offset += chunk.length;
+        }
+        
+        return result;
+      } else {
+        console.warn('浏览器不支持GZIP压缩，使用原始数据');
+        return data;
+      }
+    } catch (error) {
+      console.error('GZIP压缩失败，使用原始数据:', error);
+      return data;
+    }
+  }
+
+  /**
+   * 解压数据
+   */
+  private async decompressData(data: Uint8Array): Promise<Uint8Array> {
+    try {
+      if ('DecompressionStream' in window) {
+        const decompressionStream = new DecompressionStream('gzip');
+        const writer = decompressionStream.writable.getWriter();
+        const reader = decompressionStream.readable.getReader();
+        
+        writer.write(data);
+        writer.close();
+        
+        const chunks: Uint8Array[] = [];
+        let done = false;
+        
+        while (!done) {
+          const { value, done: streamDone } = await reader.read();
+          done = streamDone;
+          if (value) {
+            chunks.push(value);
+          }
+        }
+        
+        const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+        const result = new Uint8Array(totalLength);
+        let offset = 0;
+        for (const chunk of chunks) {
+          result.set(chunk, offset);
+          offset += chunk.length;
+        }
+        
+        return result;
+      } else {
+        return data;
+      }
+    } catch (error) {
+      console.error('GZIP解压失败:', error);
+      return data;
+    }
+  }
+
+  /**
+   * 将字符串转换为Uint8Array
+   */
+  private stringToUint8Array(str: string): Uint8Array {
+    return new TextEncoder().encode(str);
+  }
+
+  /**
+   * 将数字转换为4字节大端序数组
+   */
+  private numberToBytes(num: number): Uint8Array {
+    const buffer = new ArrayBuffer(4);
+    const view = new DataView(buffer);
+    view.setUint32(0, num, false); // false = 大端序
+    return new Uint8Array(buffer);
+  }
+
+  /**
    * 处理接收到的消息
    */
   private async handleMessage(data: ArrayBuffer): Promise<void> {
     try {
       const response = await this.parseResponse(new Uint8Array(data));
+      console.log('解析豆包响应:', {
+        messageType: response.messageType,
+        event: response.event,
+        payloadType: typeof response.payloadMsg,
+        payloadSize: response.payloadMsg instanceof Uint8Array ? response.payloadMsg.length : 'N/A'
+      });
       
       if (response.messageType === 'SERVER_ACK' && response.payloadMsg instanceof Uint8Array) {
         // 音频数据
+        console.log('收到音频数据:', response.payloadMsg.length, '字节');
         this.onEvent({
           type: 'audio',
           audio: response.payloadMsg.buffer as ArrayBuffer,
           timestamp: Date.now()
         });
       } else if (response.messageType === 'SERVER_FULL_RESPONSE') {
-        // 文本响应或控制消息
+        console.log('收到完整响应, event:', response.event);
+        
         if (response.event === 450) {
-          // 清空缓存音频事件
           console.log('收到清空缓存指令');
         }
+        
         if (typeof response.payloadMsg === 'string') {
+          console.log('收到转录文本:', response.payloadMsg);
           this.onEvent({
             type: 'transcript',
             text: response.payloadMsg,
@@ -364,6 +352,7 @@ export class DoubaoVoiceClient {
           });
         }
       } else if (response.messageType === 'SERVER_ERROR') {
+        console.error('服务器错误:', response.payloadMsg);
         this.onEvent({
           type: 'error',
           error: response.payloadMsg as string,
@@ -389,16 +378,27 @@ export class DoubaoVoiceClient {
     payloadMsg?: unknown;
     sessionId?: string;
     code?: number;
+    seq?: number;
   }> {
     if (data.length < 4) {
       throw new Error('数据长度不足');
     }
 
+    const protocolVersion = data[0] >> 4;
     const headerSize = data[0] & 0x0f;
     const messageType = data[1] >> 4;
     const messageTypeSpecificFlags = data[1] & 0x0f;
     const serializationMethod = data[2] >> 4;
     const messageCompression = data[2] & 0x0f;
+    
+    console.log('解析响应头:', {
+      protocolVersion,
+      headerSize,
+      messageType,
+      messageTypeSpecificFlags,
+      serializationMethod,
+      messageCompression
+    });
     
     const payload = data.slice(headerSize * 4);
     
@@ -410,6 +410,7 @@ export class DoubaoVoiceClient {
       code?: number;
       seq?: number;
     } = {};
+    
     let payloadMsg: unknown = null;
     let start = 0;
     
@@ -437,76 +438,48 @@ export class DoubaoVoiceClient {
           const sessionId = remainingPayload.slice(4, 4 + sessionIdSize);
           result.sessionId = new TextDecoder().decode(sessionId);
           
-          payloadMsg = remainingPayload.slice(4 + sessionIdSize + 4);
+          const payloadSizeView = new DataView(remainingPayload.buffer, remainingPayload.byteOffset + 4 + sessionIdSize, 4);
+          const payloadSize = payloadSizeView.getUint32(0, false);
+          
+          payloadMsg = remainingPayload.slice(4 + sessionIdSize + 4, 4 + sessionIdSize + 4 + payloadSize);
         }
       }
     } else if (messageType === SERVER_ERROR_RESPONSE) {
+      result.messageType = 'SERVER_ERROR';
       const view = new DataView(payload.buffer, payload.byteOffset, 4);
       result.code = view.getUint32(0, false);
       
-      payloadMsg = payload.slice(8);
-      result.messageType = 'SERVER_ERROR';
+      const payloadSizeView = new DataView(payload.buffer, payload.byteOffset + 4, 4);
+      const payloadSize = payloadSizeView.getUint32(0, false);
+      
+      payloadMsg = payload.slice(8, 8 + payloadSize);
     }
     
-    if (payloadMsg) {
-      if (messageCompression === GZIP && payloadMsg instanceof Uint8Array) {
-        payloadMsg = await this.decompressData(payloadMsg);
-      }
-      
-      if (serializationMethod === JSON_SERIALIZATION && payloadMsg instanceof Uint8Array) {
-        const text = new TextDecoder().decode(payloadMsg);
-        try {
-          payloadMsg = JSON.parse(text);
-        } catch {
-          payloadMsg = text;
-        }
-      } else if (serializationMethod !== NO_SERIALIZATION && payloadMsg instanceof Uint8Array) {
-        payloadMsg = new TextDecoder().decode(payloadMsg);
-      }
+    // 处理压缩和序列化
+    if (payloadMsg instanceof Uint8Array) {
+             if (messageCompression === GZIP) {
+         try {
+           payloadMsg = await this.decompressData(payloadMsg as Uint8Array);
+         } catch (error) {
+           console.warn('解压失败，使用原始数据:', error);
+         }
+       }
+       
+       if (serializationMethod === JSON_SERIALIZATION) {
+         try {
+           const text = new TextDecoder().decode(payloadMsg as Uint8Array);
+           payloadMsg = JSON.parse(text);
+         } catch (error) {
+           console.warn('JSON解析失败，使用原始文本:', error);
+           payloadMsg = new TextDecoder().decode(payloadMsg as Uint8Array);
+         }
+       } else if (serializationMethod !== NO_SERIALIZATION) {
+         payloadMsg = new TextDecoder().decode(payloadMsg as Uint8Array);
+       }
     }
     
     result.payloadMsg = payloadMsg;
     return result;
-  }
-
-  /**
-   * 结束会话
-   */
-  async endSession(): Promise<void> {
-    if (!this.ws || !this.isConnected) return;
-
-    try {
-      const header = this.generateHeader();
-      const sessionIdBytes = this.stringToUint8Array(this.sessionId);
-      const payload = this.stringToUint8Array('{}');
-      const compressedPayload = await this.compressData(payload);
-      
-      const message = new Uint8Array(
-        header.length + 4 + 4 + sessionIdBytes.length + 4 + compressedPayload.length
-      );
-      
-      let offset = 0;
-      message.set(header, offset);
-      offset += header.length;
-      
-      message.set(this.numberToBytes(102), offset); // finish session
-      offset += 4;
-      
-      message.set(this.numberToBytes(sessionIdBytes.length), offset);
-      offset += 4;
-      
-      message.set(sessionIdBytes, offset);
-      offset += sessionIdBytes.length;
-      
-      message.set(this.numberToBytes(compressedPayload.length), offset);
-      offset += 4;
-      
-      message.set(compressedPayload, offset);
-      
-      this.ws.send(message);
-    } catch (error) {
-      console.error('结束会话失败:', error);
-    }
   }
 
   /**
@@ -516,18 +489,11 @@ export class DoubaoVoiceClient {
     if (!this.ws) return;
 
     try {
-      await this.endSession();
-      
-      // 等待一小段时间让结束会话消息发送
-      await new Promise(resolve => setTimeout(resolve, 100));
-      
+      console.log('正在关闭WebSocket连接...');
       this.ws.close();
       this.isConnected = false;
     } catch (error) {
       console.error('关闭连接失败:', error);
-      if (this.ws) {
-        this.ws.close();
-      }
     }
   }
 

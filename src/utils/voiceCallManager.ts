@@ -17,11 +17,16 @@ export class VoiceCallManager {
   private config: DoubaoVoiceConfig;
   private sessionId: string;
   private callState: VoiceCallState;
-  private silenceTimer: NodeJS.Timeout | null = null;
   private callStartTime: number = 0;
   private onStateChange: (state: VoiceCallState) => void;
   private onTranscriptUpdate: (transcript: string) => void;
   private onVisualizationData: (data: AudioVisualizationData) => void;
+  
+  // 音频播放队列管理
+  private audioQueue: ArrayBuffer[] = [];
+  private isPlaying: boolean = false;
+  private currentAudioSource: AudioBufferSourceNode | null = null;
+  private audioContext: AudioContext | null = null;
 
   constructor(
     config: DoubaoVoiceConfig,
@@ -42,7 +47,6 @@ export class VoiceCallManager {
       isCallActive: false,
       connectionStatus: 'idle',
       callDuration: 0,
-      silenceTimer: 0,
       realtimeTranscript: '',
       audioQuality: 'medium',
       sessionId,
@@ -53,7 +57,7 @@ export class VoiceCallManager {
   }
 
   /**
-   * 开始语音通话
+   * 修复：使用代理服务器的连接方式
    */
   async startCall(): Promise<void> {
     try {
@@ -72,10 +76,13 @@ export class VoiceCallManager {
 
       console.log('浏览器支持检查通过');
 
-      // 验证配置
-      if (!this.config.baseUrl) {
-        throw new Error('语音服务配置无效：缺少WebSocket URL');
+      // 修复：使用WebSocket代理URL而不是直接连接豆包
+      // 从API获取的WebSocket URL应该是代理服务器地址
+      if (!this.config.baseUrl.includes('/api/voice/realtime')) {
+        throw new Error('WebSocket URL配置错误，应该指向代理服务器');
       }
+
+      console.log('使用WebSocket代理URL:', this.config.baseUrl);
 
       // 初始化豆包语音客户端
       console.log('正在初始化豆包语音客户端...');
@@ -85,10 +92,10 @@ export class VoiceCallManager {
         this.handleDoubaoEvent.bind(this)
       );
 
-      // 连接豆包服务
-      console.log('正在连接豆包服务...');
+      // 连接代理服务
+      console.log('正在连接代理服务...');
       await this.doubaoClient.connect();
-      console.log('豆包服务连接成功');
+      console.log('代理服务连接成功');
 
       // 开始音频捕获
       console.log('正在启动音频捕获...');
@@ -106,7 +113,6 @@ export class VoiceCallManager {
         lastActivity: Date.now()
       });
 
-      // 开始通话时长计时
       this.startCallTimer();
       
       console.log('语音通话已开始');
@@ -114,57 +120,244 @@ export class VoiceCallManager {
     } catch (error) {
       console.error('开始语音通话失败:', error);
       
-      // 清理已创建的资源
-      if (this.doubaoClient) {
-        try {
-          await this.doubaoClient.close();
-        } catch (e) {
-          console.warn('关闭豆包客户端失败:', e);
-        }
-        this.doubaoClient = null;
-      }
-      
-      if (this.audioProcessor) {
-        try {
-          this.audioProcessor.stopCapture();
-        } catch (e) {
-          console.warn('停止音频捕获失败:', e);
-        }
-      }
+      // 清理资源
+      await this.cleanup();
       
       this.updateCallState({
         connectionStatus: 'error',
         isCallActive: false
       });
       
-      // 重新抛出具体的错误信息
-      if (error instanceof Error) {
-        throw error;
-      } else {
-        throw new Error('语音通话启动失败: 未知错误');
-      }
+      throw error;
     }
   }
 
   /**
-   * 结束语音通话
+   * 修复：改进的事件处理 - 移除超时机制
    */
-  async endCall(reason: 'user_hangup' | 'timeout' | 'error' | 'silence_timeout' = 'user_hangup'): Promise<void> {
+  private handleDoubaoEvent(event: RealtimeTranscriptEvent): void {
+    console.log('收到豆包事件:', event.type);
+    
+    switch (event.type) {
+      case 'transcript':
+        if (event.text) {
+          console.log('收到AI转录文本:', event.text);
+          this.updateCallState({
+            realtimeTranscript: event.text,
+            lastActivity: Date.now()
+          });
+          this.onTranscriptUpdate(event.text);
+        }
+        break;
+
+      case 'audio':
+        if (event.audio) {
+          console.log('收到AI音频数据:', event.audio.byteLength, '字节');
+          this.playAudioData(event.audio);
+          this.updateCallState({ lastActivity: Date.now() });
+        }
+        break;
+
+      case 'error':
+        console.error('豆包语音错误:', event.error);
+        this.endCall('error');
+        break;
+
+      case 'end':
+        console.log('豆包会话结束');
+        this.endCall('timeout');
+        break;
+    }
+  }
+
+  /**
+   * 修复：改进的音频数据处理 - 不重置AI响应超时
+   */
+  private handleAudioData(audioData: ArrayBuffer): void {
+    if (!this.doubaoClient || !this.doubaoClient.isConnectionActive()) {
+      console.warn('豆包客户端未连接，跳过音频数据发送');
+      return;
+    }
+
     try {
-      // 停止静音检测定时器
-      this.stopSilenceTimer();
+      console.log('发送音频数据到豆包，大小:', audioData.byteLength);
+      this.doubaoClient.sendAudio(audioData);
+      this.updateCallState({ lastActivity: Date.now() });
+      
+      // 移除重置逻辑：用户发送音频（可能是噪音）不应该重置AI响应超时
+      // 只有收到AI的实际响应时才重置超时定时器
+      // this.resetSilenceTimer();
+    } catch (error) {
+      console.error('处理音频数据失败:', error);
+      // 不要因为单次音频数据发送失败就结束通话
+    }
+  }
 
-      // 停止音频捕获
-      if (this.audioProcessor) {
-        this.audioProcessor.stopCapture();
+  private handleSilenceDetected(duration: number): void {
+    // 移除超时机制后，这个方法只用于日志记录
+    if (duration > 0) {
+      console.log('检测到静音:', duration, 'ms');
+    }
+  }
+
+  /**
+   * 修复：改进的音频播放 - 使用队列避免重叠
+   */
+  private async playAudioData(audioData: ArrayBuffer): Promise<void> {
+    try {
+      console.log('接收到音频数据，大小:', audioData.byteLength, '队列长度:', this.audioQueue.length);
+      
+      // 检查数据是否为有效的音频格式
+      if (audioData.byteLength === 0) {
+        console.warn('音频数据为空，跳过播放');
+        return;
       }
 
-      // 关闭豆包连接
-      if (this.doubaoClient) {
-        await this.doubaoClient.close();
-        this.doubaoClient = null;
+      // 初始化音频上下文
+      if (!this.audioContext) {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (!AudioContextClass) {
+          throw new Error('浏览器不支持AudioContext');
+        }
+        this.audioContext = new AudioContextClass();
       }
+      
+      // 确保音频上下文处于运行状态
+      if (this.audioContext.state === 'suspended') {
+        await this.audioContext.resume();
+      }
+      
+      // 添加到队列
+      this.audioQueue.push(audioData);
+      
+      // 如果当前没有播放，开始播放队列
+      if (!this.isPlaying) {
+        this.processAudioQueue();
+      }
+      
+    } catch (error) {
+      console.error('播放音频失败:', error);
+    }
+  }
 
+  /**
+   * 新增：处理音频播放队列
+   */
+  private async processAudioQueue(): Promise<void> {
+    if (this.isPlaying || this.audioQueue.length === 0 || !this.audioContext) {
+      return;
+    }
+
+    this.isPlaying = true;
+    console.log('开始处理音频队列，剩余:', this.audioQueue.length);
+
+    try {
+      while (this.audioQueue.length > 0) {
+        const audioData = this.audioQueue.shift()!;
+        await this.playRawPCMData(audioData);
+      }
+    } catch (error) {
+      console.error('处理音频队列失败:', error);
+    } finally {
+      this.isPlaying = false;
+      console.log('音频队列处理完成');
+    }
+  }
+
+  /**
+   * 新增：播放原始PCM数据 - 根据豆包demo调整，支持队列播放
+   */
+  private async playRawPCMData(audioData: ArrayBuffer): Promise<void> {
+    return new Promise((resolve, reject) => {
+      try {
+        console.log('播放音频片段, 数据长度:', audioData.byteLength);
+        
+        if (!this.audioContext) {
+          reject(new Error('AudioContext未初始化'));
+          return;
+        }
+        
+        // 根据豆包demo配置：24000Hz, 单声道, 可能是Float32格式
+        const sampleRate = 24000;
+        const channels = 1;
+        
+        // 首先尝试检测数据格式
+        let audioBuffer: AudioBuffer;
+        
+        // 尝试1: 假设是Float32格式（与demo的paFloat32一致）
+        try {
+          const float32Array = new Float32Array(audioData);
+          
+          // 检查数据范围是否合理（Float32应该在-1到1之间）
+          let minVal = float32Array[0] || 0;
+          let maxVal = float32Array[0] || 0;
+          for (let i = 1; i < Math.min(100, float32Array.length); i++) {
+            minVal = Math.min(minVal, float32Array[i]);
+            maxVal = Math.max(maxVal, float32Array[i]);
+          }
+          
+          if (Math.abs(minVal) <= 1.2 && Math.abs(maxVal) <= 1.2) {
+            // 看起来像Float32数据
+            audioBuffer = this.audioContext.createBuffer(channels, float32Array.length, sampleRate);
+            audioBuffer.copyToChannel(float32Array, 0);
+            console.log('使用Float32格式播放, 样本数:', float32Array.length);
+          } else {
+            throw new Error('不是Float32格式');
+          }
+        } catch (e) {
+          // 尝试2: 假设是16位PCM格式
+          console.log('Float32失败，尝试16位PCM格式');
+          const int16Array = new Int16Array(audioData);
+          const float32Array = new Float32Array(int16Array.length);
+          
+          // 转换为Float32格式
+          for (let i = 0; i < int16Array.length; i++) {
+            float32Array[i] = int16Array[i] / 32768.0; // 归一化到-1到1
+          }
+          
+          audioBuffer = this.audioContext.createBuffer(channels, float32Array.length, sampleRate);
+          audioBuffer.copyToChannel(float32Array, 0);
+          console.log('使用16位PCM格式播放, 样本数:', float32Array.length);
+        }
+        
+        // 停止之前的播放
+        if (this.currentAudioSource) {
+          try {
+            this.currentAudioSource.stop();
+          } catch (e) {
+            // 忽略停止错误
+          }
+        }
+        
+        // 创建音频源并播放
+        const source = this.audioContext.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(this.audioContext.destination);
+        
+        this.currentAudioSource = source;
+        
+        // 监听播放结束
+        source.onended = () => {
+          console.log('音频片段播放完成，时长:', audioBuffer.duration, '秒');
+          this.currentAudioSource = null;
+          resolve();
+        };
+        
+        source.start();
+        
+      } catch (error) {
+        console.error('PCM音频播放失败:', error);
+        reject(error);
+      }
+    });
+  }
+
+  async endCall(reason: 'user_hangup' | 'timeout' | 'error' = 'user_hangup'): Promise<void> {
+    try {
+      console.log('结束语音通话，原因:', reason);
+      
+      await this.cleanup();
+      
       this.updateCallState({
         connectionStatus: 'disconnected',
         isCallActive: false
@@ -191,7 +384,7 @@ export class VoiceCallManager {
         console.warn('结束通话API调用错误:', error);
       }
 
-      console.log(`语音通话已结束，原因: ${reason}`);
+      console.log('语音通话已结束');
 
     } catch (error) {
       console.error('结束语音通话失败:', error);
@@ -199,183 +392,83 @@ export class VoiceCallManager {
   }
 
   /**
-   * 处理豆包事件
+   * 新增：资源清理方法
    */
-  private handleDoubaoEvent(event: RealtimeTranscriptEvent): void {
-    switch (event.type) {
-      case 'transcript':
-        if (event.text) {
-          this.updateCallState({
-            realtimeTranscript: event.text,
-            lastActivity: Date.now()
-          });
-          this.onTranscriptUpdate(event.text);
-          this.resetSilenceTimer();
-        }
-        break;
-
-      case 'audio':
-        if (event.audio) {
-          this.playAudioData(event.audio);
-          this.updateCallState({ lastActivity: Date.now() });
-          this.resetSilenceTimer();
-        }
-        break;
-
-      case 'error':
-        console.error('豆包语音错误:', event.error);
-        this.endCall('error');
-        break;
-
-      case 'end':
-        console.log('豆包会话结束');
-        this.endCall('timeout');
-        break;
-    }
-  }
-
-  /**
-   * 处理音频数据
-   */
-  private handleAudioData(audioData: ArrayBuffer): void {
-    if (!this.doubaoClient || !this.doubaoClient.isConnectionActive()) {
-      console.warn('豆包客户端未连接，跳过音频数据发送');
-      return;
-    }
-
+  private async cleanup(): Promise<void> {
     try {
-      console.log('接收到音频数据，大小:', audioData.byteLength);
-      this.doubaoClient.sendAudio(audioData);
-      this.updateCallState({ lastActivity: Date.now() });
-      this.resetSilenceTimer();
-    } catch (error) {
-      console.error('处理音频数据失败:', error);
-      // 不要因为单次音频数据发送失败就结束通话
-      // 只记录错误即可
-    }
-  }
-
-  /**
-   * 处理静音检测
-   */
-  private handleSilenceDetected(duration: number): void {
-    if (this.config.silenceDetection && duration >= this.config.callTimeout) {
-      console.log(`检测到${duration}ms静音，准备结束通话`);
-      this.endCall('silence_timeout');
-    }
-  }
-
-  /**
-   * 播放音频数据
-   */
-  private async playAudioData(audioData: ArrayBuffer): Promise<void> {
-    try {
-      // 创建音频上下文
-      const AudioContextClass = window.AudioContext || (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (!AudioContextClass) {
-        throw new Error('浏览器不支持AudioContext');
+      // 停止音频播放
+      if (this.currentAudioSource) {
+        try {
+          this.currentAudioSource.stop();
+        } catch (e) {
+          // 忽略停止错误
+        }
+        this.currentAudioSource = null;
       }
-      const audioContext = new AudioContextClass();
       
-      // 解码音频数据
-      const audioBuffer = await audioContext.decodeAudioData(audioData.slice(0));
+      // 清空音频队列
+      this.audioQueue = [];
+      this.isPlaying = false;
       
-      // 创建音频源
-      const source = audioContext.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(audioContext.destination);
-      
-      // 播放音频
-      source.start();
-      
+      // 关闭音频上下文
+      if (this.audioContext && this.audioContext.state !== 'closed') {
+        try {
+          await this.audioContext.close();
+        } catch (e) {
+          // 忽略关闭错误
+        }
+        this.audioContext = null;
+      }
+
+      // 停止音频捕获
+      if (this.audioProcessor) {
+        this.audioProcessor.stopCapture();
+      }
+
+      // 关闭豆包连接
+      if (this.doubaoClient) {
+        await this.doubaoClient.close();
+        this.doubaoClient = null;
+      }
     } catch (error) {
-      console.error('播放音频失败:', error);
+      console.error('清理资源失败:', error);
     }
   }
 
-  /**
-   * 重置静音定时器
-   */
-  private resetSilenceTimer(): void {
-    this.stopSilenceTimer();
-    
-    if (this.config.silenceDetection && this.callState.isCallActive) {
-      this.silenceTimer = setTimeout(() => {
-        console.log('静音超时，结束通话');
-        this.endCall('silence_timeout');
-      }, this.config.callTimeout);
-    }
-  }
-
-  /**
-   * 停止静音定时器
-   */
-  private stopSilenceTimer(): void {
-    if (this.silenceTimer) {
-      clearTimeout(this.silenceTimer);
-      this.silenceTimer = null;
-    }
-  }
-
-  /**
-   * 开始通话时长计时
-   */
   private startCallTimer(): void {
     const updateDuration = () => {
       if (this.callState.isCallActive) {
         const duration = Date.now() - this.callStartTime;
         this.updateCallState({ callDuration: duration });
-        setTimeout(updateDuration, 1000); // 每秒更新一次
+        setTimeout(updateDuration, 1000);
       }
     };
     updateDuration();
   }
 
-  /**
-   * 更新通话状态
-   */
   private updateCallState(updates: Partial<VoiceCallState>): void {
     this.callState = { ...this.callState, ...updates };
     this.onStateChange(this.callState);
   }
 
-  /**
-   * 切换静音状态
-   */
   toggleMute(): void {
-    if (this.audioProcessor) {
-      // AudioProcessor暂时不支持静音切换，这里可以扩展
-      console.log('切换静音状态');
-    }
+    console.log('切换静音状态');
+    // TODO: 实现静音功能
   }
 
-  /**
-   * 暂停/恢复通话
-   */
   togglePause(): void {
-    if (this.callState.isCallActive) {
-      // 实现暂停逻辑
-      console.log('切换暂停状态');
-    }
+    console.log('切换暂停状态');
+    // TODO: 实现暂停功能
   }
 
-  /**
-   * 获取当前通话状态
-   */
   getCallState(): VoiceCallState {
     return { ...this.callState };
   }
 
-  /**
-   * 检查通话是否活跃
-   */
   isCallActive(): boolean {
     return this.callState.isCallActive && this.callState.connectionStatus === 'connected';
   }
 
-  /**
-   * 清理资源
-   */
   dispose(): void {
     this.endCall('user_hangup');
     
@@ -383,7 +476,5 @@ export class VoiceCallManager {
       this.audioProcessor.dispose();
       this.audioProcessor = null;
     }
-
-    this.stopSilenceTimer();
   }
 }

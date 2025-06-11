@@ -177,7 +177,7 @@ export class AudioProcessor {
     // 计算音量用于静音检测
     const volume = this.calculateVolume(processedData);
 
-    // 静音检测
+    // 静音检测（仅用于日志记录，不影响超时逻辑）
     if (volume < this.silenceThreshold) {
       if (this.silenceStartTime === 0) {
         this.silenceStartTime = Date.now();
@@ -188,6 +188,8 @@ export class AudioProcessor {
         }
       }
     } else {
+      // 重置静音计时，但不通知上层重置超时定时器
+      // 超时逻辑现在完全基于AI是否响应
       this.silenceStartTime = 0;
     }
 
@@ -321,8 +323,9 @@ export class AudioProcessor {
   stopCapture(): void {
     if (!this.isRecording) return;
 
-    this.isRecording = false;
+    console.log('正在停止音频捕获...');
     this.cleanup();
+    this.resetCallbacks();
     
     console.log('音频捕获已停止');
   }
@@ -332,8 +335,12 @@ export class AudioProcessor {
    */
   private cleanup(): void {
     try {
-      // 断开音频节点连接
+      // 先停止录音状态，防止后续处理
+      this.isRecording = false;
+      
+      // 清除音频处理回调，防止后续事件触发
       if (this.scriptProcessorNode) {
+        this.scriptProcessorNode.onaudioprocess = null;
         this.scriptProcessorNode.disconnect();
         this.scriptProcessorNode = null;
       }
@@ -355,16 +362,20 @@ export class AudioProcessor {
         this.mediaStream = null;
       }
 
-      // 重置回调
-      this.onAudioData = null;
-      this.onSilenceDetected = null;
-      this.onVisualizationData = null;
-      
       this.silenceStartTime = 0;
 
     } catch (error) {
       console.error('清理音频资源失败:', error);
     }
+  }
+
+  /**
+   * 完全重置所有回调和状态
+   */
+  private resetCallbacks(): void {
+    this.onAudioData = null;
+    this.onSilenceDetected = null;
+    this.onVisualizationData = null;
   }
 
   /**
@@ -414,5 +425,7 @@ export class AudioProcessor {
       this.audioContext.close();
       this.audioContext = null;
     }
+    
+    this.resetCallbacks();
   }
 }

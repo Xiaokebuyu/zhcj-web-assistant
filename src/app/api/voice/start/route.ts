@@ -12,7 +12,6 @@ interface StartVoiceCallResponse {
   wsUrl?: string;
   error?: string;
   config?: {
-    callTimeout: number;
     silenceThreshold: number;
     audioConfig: {
       inputSampleRate: number;
@@ -67,7 +66,6 @@ export async function POST(request: NextRequest): Promise<NextResponse<StartVoic
       sessionId,
       wsUrl,
       config: {
-        callTimeout: 8000, // 8秒超时
         silenceThreshold: silenceDetection ? 0.01 : 0,
         audioConfig: {
           inputSampleRate: sampleRates.input,
@@ -113,7 +111,6 @@ export async function GET(): Promise<NextResponse> {
       },
       limits: {
         maxCallDuration: 300000, // 5分钟
-        silenceTimeout: 8000, // 8秒
         maxConcurrentCalls: 1
       }
     });

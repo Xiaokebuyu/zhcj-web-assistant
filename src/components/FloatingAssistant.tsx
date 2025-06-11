@@ -55,7 +55,6 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     isCallActive: false,
     connectionStatus: 'idle',
     callDuration: 0,
-    silenceTimer: 0,
     realtimeTranscript: '',
     audioQuality: 'medium',
     lastActivity: Date.now()
@@ -116,8 +115,6 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     apiAccessKey: 'LMxFTYn2mmWwQwmLfT3ZbwS4yj0JPiMt',
     apiResourceId: 'volc.speech.dialog',
     baseUrl: '', // 这里将被动态设置
-    callTimeout: 8000, // 8秒超时
-    silenceDetection: true,
     audioConfig: {
       inputSampleRate: 16000,
       outputSampleRate: 24000,
@@ -172,8 +169,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          audioQuality: voiceCallState.audioQuality,
-          silenceDetection: true
+          audioQuality: voiceCallState.audioQuality
         }),
       });
 
@@ -267,7 +263,6 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
         isCallActive: false,
         connectionStatus: 'idle',
         callDuration: 0,
-        silenceTimer: 0,
         realtimeTranscript: '',
         audioQuality: 'medium',
         lastActivity: Date.now()

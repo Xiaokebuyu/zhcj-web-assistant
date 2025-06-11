@@ -369,7 +369,6 @@ export interface VoiceCallState {
   isCallActive: boolean;
   connectionStatus: VoiceCallConnectionStatus;
   callDuration: number;
-  silenceTimer: number;
   realtimeTranscript: string;
   audioQuality: 'low' | 'medium' | 'high';
   sessionId?: string;
@@ -382,8 +381,6 @@ export interface DoubaoVoiceConfig {
   apiAccessKey: string;
   apiResourceId: string;
   baseUrl: string;
-  callTimeout: number; // 8秒超时
-  silenceDetection: boolean;
   audioConfig: {
     inputSampleRate: number;
     outputSampleRate: number;
