@@ -19,9 +19,15 @@ class RealtimeDialogClient:
     async def connect(self) -> None:
         """建立WebSocket连接"""
         print(f"url: {self.config['base_url']}, headers: {self.config['headers']}")
+        
+        # 将headers转换为正确的格式
+        headers = []
+        for key, value in self.config['headers'].items():
+            headers.append((key, value))
+        
         self.ws = await websockets.connect(
             self.config['base_url'],
-            extra_headers=self.config['headers'],
+            extra_headers=headers,
             ping_interval=None
         )
         self.logid = self.ws.response_headers.get("X-Tt-Logid")

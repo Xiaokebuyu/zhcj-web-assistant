@@ -32,20 +32,14 @@ function generateHeader(
   messageTypeSpecificFlags = MSG_WITH_EVENT,
   serialMethod = JSON_SERIALIZATION,
   compressionType = GZIP,
-  reservedData = 0x00,
-  extensionHeader = Buffer.alloc(0)
+  reservedData = 0x00
 ) {
-  const headerSize = 4 + extensionHeader.length;
-  const header = Buffer.alloc(headerSize);
+  const header = Buffer.alloc(4);
   
-  header[0] = (headerSize >> 2) | (version << 4);
+  header[0] = (version << 4) | 0x01; // 版本 + 固定头部大小1
   header[1] = (messageType << 4) | messageTypeSpecificFlags;
   header[2] = (serialMethod << 4) | compressionType;
   header[3] = reservedData;
-  
-  if (extensionHeader.length > 0) {
-    extensionHeader.copy(header, 4);
-  }
   
   return header;
 }
@@ -88,70 +82,35 @@ app.prepare().then(() => {
 
     let doubaoWs = null;
     let isConnected = false;
+    let isProtocolInitialized = false;
 
     // 连接到豆包服务
     const connectToDoubao = async () => {
       try {
         console.log('正在连接到豆包服务...');
         
-        // 使用ws库连接豆包，支持自定义headers
+        // 修复：添加完整的headers，包括缺失的X-Api-App-Key
         doubaoWs = new WebSocket('wss://openspeech.bytedance.com/api/v3/realtime/dialogue', {
           headers: {
             'X-Api-App-ID': '2139817228',
             'X-Api-Access-Key': 'LMxFTYn2mmWwQwmLfT3ZbwS4yj0JPiMt',
             'X-Api-Resource-Id': 'volc.speech.dialog',
+            'X-Api-App-Key': 'PlgvMymc7f3tQnJ6', // 修复：添加缺失的App Key
             'X-Api-Connect-Id': Date.now().toString() + Math.random().toString(36).substr(2, 9)
           }
         });
 
         doubaoWs.on('open', async () => {
-          console.log('豆包WebSocket连接已建立');
+          console.log('豆包WebSocket连接已建立，开始协议初始化...');
           
           try {
-            // 发送开始连接请求
-            const header = generateHeader();
-            const payload = Buffer.from('{}');
-            const compressedPayload = gzip.gzipSync(payload);
+            // 发送StartConnection请求
+            await sendStartConnection();
             
-            const message = Buffer.concat([
-              header,
-              numberToBytes(1),
-              numberToBytes(compressedPayload.length),
-              compressedPayload
-            ]);
-            
-            doubaoWs.send(message);
-            
-            // 等待响应后发送开始会话请求
+            // 等待一下再发送StartSession
             setTimeout(async () => {
-              const startSessionReq = {
-                tts: {
-                  audio_config: {
-                    channel: 1,
-                    format: 'pcm',
-                    sample_rate: 24000
-                  }
-                },
-                dialog: {
-                  bot_name: '豆包'
-                }
-              };
-
-              const sessionHeader = generateHeader();
-              const sessionIdBytes = Buffer.from(sessionId);
-              const sessionPayload = Buffer.from(JSON.stringify(startSessionReq));
-              const compressedSessionPayload = gzip.gzipSync(sessionPayload);
-              
-              const sessionMessage = Buffer.concat([
-                sessionHeader,
-                numberToBytes(100),
-                numberToBytes(sessionIdBytes.length),
-                sessionIdBytes,
-                numberToBytes(compressedSessionPayload.length),
-                compressedSessionPayload
-              ]);
-              
-              doubaoWs.send(sessionMessage);
+              await sendStartSession();
+              isProtocolInitialized = true;
               isConnected = true;
               
               // 通知客户端连接成功
@@ -160,10 +119,10 @@ app.prepare().then(() => {
                 sessionId: sessionId
               }));
               
-            }, 100);
+            }, 200);
             
           } catch (error) {
-            console.error('豆包初始化失败:', error);
+            console.error('豆包协议初始化失败:', error);
             ws.send(JSON.stringify({
               type: 'error',
               error: '豆包服务初始化失败'
@@ -171,12 +130,62 @@ app.prepare().then(() => {
           }
         });
 
+        // 发送StartConnection请求
+        const sendStartConnection = async () => {
+          const header = generateHeader();
+          const payload = Buffer.from('{}');
+          const compressedPayload = gzip.gzipSync(payload);
+          
+          const message = Buffer.concat([
+            header,
+            numberToBytes(1), // StartConnection event
+            numberToBytes(compressedPayload.length),
+            compressedPayload
+          ]);
+          
+          doubaoWs.send(message);
+          console.log('已发送StartConnection请求');
+        };
+
+        // 发送StartSession请求
+        const sendStartSession = async () => {
+          const startSessionReq = {
+            tts: {
+              audio_config: {
+                channel: 1,
+                format: 'pcm',
+                sample_rate: 24000
+              }
+            },
+            dialog: {
+              bot_name: '豆包'
+            }
+          };
+
+          const header = generateHeader();
+          const sessionIdBytes = Buffer.from(sessionId);
+          const payload = Buffer.from(JSON.stringify(startSessionReq));
+          const compressedPayload = gzip.gzipSync(payload);
+          
+          const message = Buffer.concat([
+            header,
+            numberToBytes(100), // StartSession event
+            numberToBytes(sessionIdBytes.length),
+            sessionIdBytes,
+            numberToBytes(compressedPayload.length),
+            compressedPayload
+          ]);
+          
+          doubaoWs.send(message);
+          console.log('已发送StartSession请求');
+        };
+
         doubaoWs.on('message', (data) => {
-          // 转发豆包的消息到客户端
           try {
+            // 转发豆包的消息到客户端
             ws.send(data);
           } catch (error) {
-            console.error('转发消息失败:', error);
+            console.error('转发豆包消息失败:', error);
           }
         });
 
@@ -184,12 +193,12 @@ app.prepare().then(() => {
           console.error('豆包WebSocket错误:', error);
           ws.send(JSON.stringify({
             type: 'error',
-            error: '豆包服务连接错误'
+            error: '豆包服务连接错误: ' + error.message
           }));
         });
 
-        doubaoWs.on('close', () => {
-          console.log('豆包WebSocket连接已关闭');
+        doubaoWs.on('close', (code, reason) => {
+          console.log('豆包WebSocket连接已关闭, code:', code, 'reason:', reason);
           isConnected = false;
           ws.send(JSON.stringify({
             type: 'end'
@@ -200,7 +209,7 @@ app.prepare().then(() => {
         console.error('连接豆包服务失败:', error);
         ws.send(JSON.stringify({
           type: 'error',
-          error: '无法连接到豆包服务'
+          error: '无法连接到豆包服务: ' + error.message
         }));
       }
     };
@@ -208,9 +217,11 @@ app.prepare().then(() => {
     // 处理客户端消息
     ws.on('message', (message) => {
       try {
-        if (doubaoWs && isConnected && doubaoWs.readyState === WebSocket.OPEN) {
+        if (doubaoWs && isConnected && isProtocolInitialized && doubaoWs.readyState === WebSocket.OPEN) {
           // 转发客户端消息到豆包
           doubaoWs.send(message);
+        } else {
+          console.warn('豆包连接未就绪，忽略客户端消息');
         }
       } catch (error) {
         console.error('转发客户端消息失败:', error);
@@ -219,13 +230,60 @@ app.prepare().then(() => {
 
     ws.on('close', () => {
       console.log('客户端WebSocket连接已关闭');
+      
+      // 发送FinishSession和FinishConnection
       if (doubaoWs && doubaoWs.readyState === WebSocket.OPEN) {
-        doubaoWs.close();
+        try {
+          // 发送FinishSession
+          const finishSessionHeader = generateHeader();
+          const sessionIdBytes = Buffer.from(sessionId);
+          const payload = Buffer.from('{}');
+          const compressedPayload = gzip.gzipSync(payload);
+          
+          const finishSessionMessage = Buffer.concat([
+            finishSessionHeader,
+            numberToBytes(102), // FinishSession event
+            numberToBytes(sessionIdBytes.length),
+            sessionIdBytes,
+            numberToBytes(compressedPayload.length),
+            compressedPayload
+          ]);
+          
+          doubaoWs.send(finishSessionMessage);
+          
+          setTimeout(() => {
+            // 发送FinishConnection
+            const finishConnectionHeader = generateHeader();
+            const finishPayload = Buffer.from('{}');
+            const compressedFinishPayload = gzip.gzipSync(finishPayload);
+            
+            const finishConnectionMessage = Buffer.concat([
+              finishConnectionHeader,
+              numberToBytes(2), // FinishConnection event
+              numberToBytes(compressedFinishPayload.length),
+              compressedFinishPayload
+            ]);
+            
+            doubaoWs.send(finishConnectionMessage);
+            
+            setTimeout(() => {
+              doubaoWs.close();
+            }, 100);
+            
+          }, 100);
+          
+        } catch (error) {
+          console.error('发送结束请求失败:', error);
+          doubaoWs.close();
+        }
       }
     });
 
     ws.on('error', (error) => {
       console.error('客户端WebSocket错误:', error);
+      if (doubaoWs && doubaoWs.readyState === WebSocket.OPEN) {
+        doubaoWs.close();
+      }
     });
 
     // 开始连接到豆包

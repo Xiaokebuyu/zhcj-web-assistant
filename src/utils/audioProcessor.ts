@@ -20,7 +20,7 @@ export class AudioProcessor {
   // 音频配置
   private readonly sampleRate = 16000; // 豆包要求的采样率
   private readonly channels = 1; // 单声道
-  private readonly bufferSize = 3200; // 与豆包示例一致
+  private readonly bufferSize = 2048; // 减小缓冲区大小以减少延迟
 
   constructor() {
     this.initializeAudioContext();
@@ -52,7 +52,7 @@ export class AudioProcessor {
   }
 
   /**
-   * 开始音频捕获
+   * 修复：改进的音频捕获启动方法
    */
   async startCapture(
     onAudioData: (audioData: ArrayBuffer) => void,
@@ -79,14 +79,16 @@ export class AudioProcessor {
 
       console.log('正在请求麦克风权限...');
       
-      // 请求麦克风权限
+      // 修复：使用更兼容的音频约束
       this.mediaStream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          sampleRate: this.sampleRate,
-          channelCount: this.channels,
+          sampleRate: { ideal: this.sampleRate },
+          channelCount: { exact: this.channels },
           echoCancellation: true,
           noiseSuppression: true,
-          autoGainControl: true
+          autoGainControl: true,
+          // 添加延迟优化
+          latency: { ideal: 0.01 }
         }
       });
 
@@ -96,7 +98,7 @@ export class AudioProcessor {
         await this.initializeAudioContext();
       }
 
-      // 恢复音频上下文（某些浏览器需要用户交互后才能启动）
+      // 修复：确保音频上下文处于运行状态
       if (this.audioContext!.state === 'suspended') {
         console.log('正在恢复音频上下文...');
         await this.audioContext!.resume();
@@ -105,7 +107,7 @@ export class AudioProcessor {
       // 创建源节点
       this.sourceNode = this.audioContext!.createMediaStreamSource(this.mediaStream);
       
-      // 创建脚本处理器节点
+      // 修复：使用更小的缓冲区大小以减少延迟
       this.scriptProcessorNode = this.audioContext!.createScriptProcessor(
         this.bufferSize, 
         this.channels, 
@@ -129,7 +131,7 @@ export class AudioProcessor {
       this.isRecording = true;
       this.silenceStartTime = Date.now();
       
-      console.log('音频捕获已开始');
+      console.log('音频捕获已开始，采样率:', this.audioContext!.sampleRate);
 
     } catch (error) {
       console.error('开始音频捕获失败:', error);
@@ -155,16 +157,25 @@ export class AudioProcessor {
   }
 
   /**
-   * 处理音频数据
+   * 修复：改进的音频数据处理方法
    */
   private processAudioData(event: AudioProcessingEvent): void {
-    if (!this.isRecording || !this.onAudioData) return;
+    if (!this.isRecording || !this.onAudioData) {
+      return;
+    }
 
     const inputBuffer = event.inputBuffer;
-    const channelData = inputBuffer.getChannelData(0); // 获取第一个声道
+    const channelData = inputBuffer.getChannelData(0);
+
+    // 修复：重采样到目标采样率（如果需要）
+    let processedData = channelData;
+    if (inputBuffer.sampleRate !== this.sampleRate) {
+      processedData = this.resampleAudio(channelData, inputBuffer.sampleRate, this.sampleRate);
+      console.log(`重采样音频: ${inputBuffer.sampleRate}Hz -> ${this.sampleRate}Hz`);
+    }
 
     // 计算音量用于静音检测
-    const volume = this.calculateVolume(channelData);
+    const volume = this.calculateVolume(processedData);
 
     // 静音检测
     if (volume < this.silenceThreshold) {
@@ -172,12 +183,12 @@ export class AudioProcessor {
         this.silenceStartTime = Date.now();
       } else {
         const silenceDuration = Date.now() - this.silenceStartTime;
-        if (this.onSilenceDetected && silenceDuration > 1000) { // 1秒以上静音才报告
+        if (this.onSilenceDetected && silenceDuration > 1000) {
           this.onSilenceDetected(silenceDuration);
         }
       }
     } else {
-      this.silenceStartTime = 0; // 重置静音计时
+      this.silenceStartTime = 0;
     }
 
     // 生成可视化数据
@@ -187,7 +198,13 @@ export class AudioProcessor {
     }
 
     // 转换为PCM格式并发送
-    const pcmData = this.convertToPCM(channelData);
+    const pcmData = this.convertToPCM(processedData);
+    
+    // 添加调试日志
+    if (volume > this.silenceThreshold) {
+      console.log(`音频数据: 采样数=${processedData.length}, 音量=${volume.toFixed(4)}, PCM大小=${pcmData.length * 2}字节`);
+    }
+    
     this.onAudioData(pcmData.buffer as ArrayBuffer);
   }
 
@@ -203,16 +220,50 @@ export class AudioProcessor {
   }
 
   /**
-   * 转换为PCM格式（16位整数）
+   * 修复：改进的PCM转换方法，确保与豆包兼容
    */
   private convertToPCM(float32Array: Float32Array): Int16Array {
     const int16Array = new Int16Array(float32Array.length);
     for (let i = 0; i < float32Array.length; i++) {
-      // 将-1到1的浮点数转换为-32768到32767的整数
-      const sample = Math.max(-1, Math.min(1, float32Array[i]));
-      int16Array[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+      // 限制到[-1, 1]范围
+      let sample = Math.max(-1, Math.min(1, float32Array[i]));
+      
+      // 转换为16位整数，使用正确的范围
+      if (sample < 0) {
+        int16Array[i] = Math.floor(sample * 0x8000); // -32768
+      } else {
+        int16Array[i] = Math.floor(sample * 0x7FFF); // 32767
+      }
     }
     return int16Array;
+  }
+
+  /**
+   * 新增：简单的重采样方法
+   */
+  private resampleAudio(input: Float32Array, inputRate: number, outputRate: number): Float32Array {
+    if (inputRate === outputRate) {
+      return input;
+    }
+
+    const ratio = inputRate / outputRate;
+    const outputLength = Math.floor(input.length / ratio);
+    const output = new Float32Array(outputLength);
+
+    for (let i = 0; i < outputLength; i++) {
+      const sourceIndex = i * ratio;
+      const index = Math.floor(sourceIndex);
+      const fraction = sourceIndex - index;
+
+      if (index + 1 < input.length) {
+        // 线性插值
+        output[i] = input[index] * (1 - fraction) + input[index + 1] * fraction;
+      } else {
+        output[i] = input[index];
+      }
+    }
+
+    return output;
   }
 
   /**

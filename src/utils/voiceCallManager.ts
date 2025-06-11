@@ -238,10 +238,20 @@ export class VoiceCallManager {
    * 处理音频数据
    */
   private handleAudioData(audioData: ArrayBuffer): void {
-    if (this.doubaoClient && this.doubaoClient.isConnectionActive()) {
+    if (!this.doubaoClient || !this.doubaoClient.isConnectionActive()) {
+      console.warn('豆包客户端未连接，跳过音频数据发送');
+      return;
+    }
+
+    try {
+      console.log('接收到音频数据，大小:', audioData.byteLength);
       this.doubaoClient.sendAudio(audioData);
       this.updateCallState({ lastActivity: Date.now() });
       this.resetSilenceTimer();
+    } catch (error) {
+      console.error('处理音频数据失败:', error);
+      // 不要因为单次音频数据发送失败就结束通话
+      // 只记录错误即可
     }
   }
 

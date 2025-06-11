@@ -247,29 +247,49 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
 
   // 结束语音通话
   const endVoiceCall = useCallback(async () => {
-    if (voiceCallManager.current) {
-      await voiceCallManager.current.endCall('user_hangup');
-      voiceCallManager.current = null;
+    console.log('正在结束语音通话...');
+    
+    try {
+      if (voiceCallManager.current) {
+        console.log('调用VoiceCallManager.endCall');
+        await voiceCallManager.current.endCall('user_hangup');
+        voiceCallManager.current = null;
+        console.log('VoiceCallManager已清理');
+      }
+      
+      // 切换回文字模式
+      console.log('切换回文字模式');
+      setAssistantMode('text');
+      
+      // 重置语音通话状态
+      setVoiceCallState({
+        mode: 'text',
+        isCallActive: false,
+        connectionStatus: 'idle',
+        callDuration: 0,
+        silenceTimer: 0,
+        realtimeTranscript: '',
+        audioQuality: 'medium',
+        lastActivity: Date.now()
+      });
+      
+      console.log('语音通话已成功结束');
+    } catch (error) {
+      console.error('结束语音通话时出错:', error);
+      // 即使出错也要确保状态重置
+      setAssistantMode('text');
+      setVoiceCallState(prev => ({
+        ...prev,
+        mode: 'text',
+        isCallActive: false,
+        connectionStatus: 'idle'
+      }));
     }
-    
-    // 切换回文字模式
-    setAssistantMode('text');
-    
-    // 重置语音通话状态
-    setVoiceCallState({
-      mode: 'text',
-      isCallActive: false,
-      connectionStatus: 'idle',
-      callDuration: 0,
-      silenceTimer: 0,
-      realtimeTranscript: '',
-      audioQuality: 'medium',
-      lastActivity: Date.now()
-    });
   }, []);
 
   // 切换静音
   const toggleVoiceCallMute = useCallback(() => {
+    console.log('切换静音状态');
     if (voiceCallManager.current) {
       voiceCallManager.current.toggleMute();
     }
@@ -277,6 +297,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
 
   // 切换暂停
   const toggleVoiceCallPause = useCallback(() => {
+    console.log('切换暂停状态');
     if (voiceCallManager.current) {
       voiceCallManager.current.togglePause();
     }

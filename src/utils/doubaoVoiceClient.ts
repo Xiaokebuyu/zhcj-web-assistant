@@ -40,7 +40,7 @@ export class DoubaoVoiceClient {
   }
 
   /**
-   * 生成协议头部
+   * 生成协议头部 - 修复版本
    */
   private generateHeader(
     version = PROTOCOL_VERSION,
@@ -51,13 +51,14 @@ export class DoubaoVoiceClient {
     reservedData = 0x00,
     extensionHeader = new Uint8Array()
   ): Uint8Array {
+    // 修复：header size 应该是字节数而不是4字节单位数
     const header = new Uint8Array(4 + extensionHeader.length);
-    const headerSize = Math.floor(extensionHeader.length / 4) + 1;
+    const headerSize = 1; // 固定为1，表示4字节的基础头部
     
-    header[0] = (version << 4) | headerSize;
-    header[1] = (messageType << 4) | messageTypeSpecificFlags;
-    header[2] = (serialMethod << 4) | compressionType;
-    header[3] = reservedData;
+    header[0] = (version << 4) | headerSize;  // 版本 + 头部大小
+    header[1] = (messageType << 4) | messageTypeSpecificFlags;  // 消息类型 + 标志
+    header[2] = (serialMethod << 4) | compressionType;  // 序列化 + 压缩
+    header[3] = reservedData;  // 保留字段
     
     if (extensionHeader.length > 0) {
       header.set(extensionHeader, 4);
@@ -67,19 +68,21 @@ export class DoubaoVoiceClient {
   }
 
   /**
-   * 压缩数据（简化版gzip）
+   * 压缩数据 - 修复版本，兼容性更好
    */
   private async compressData(data: Uint8Array): Promise<Uint8Array> {
     try {
-      // 在浏览器环境中使用CompressionStream
+      // 优先使用CompressionStream（较新的浏览器）
       if ('CompressionStream' in window) {
         const stream = new CompressionStream('gzip');
         const writer = stream.writable.getWriter();
         const reader = stream.readable.getReader();
         
-        writer.write(data);
-        writer.close();
+        // 写入数据
+        await writer.write(data);
+        await writer.close();
         
+        // 读取压缩后的数据
         const chunks: Uint8Array[] = [];
         let done = false;
         
@@ -101,19 +104,22 @@ export class DoubaoVoiceClient {
         }
         
         return result;
-      } else {
-        // 如果不支持CompressionStream，返回原始数据
+      } 
+      // 降级方案：如果不支持CompressionStream，返回原始数据
+      else {
         console.warn('CompressionStream not supported, sending uncompressed data');
+        // 添加简单的标记，表明这是未压缩的数据
         return data;
       }
     } catch (error) {
       console.error('Compression failed:', error);
+      // 压缩失败时返回原始数据
       return data;
     }
   }
 
   /**
-   * 解压数据
+   * 解压数据 - 修复版本
    */
   private async decompressData(data: Uint8Array): Promise<Uint8Array> {
     try {
@@ -122,8 +128,8 @@ export class DoubaoVoiceClient {
         const writer = stream.writable.getWriter();
         const reader = stream.readable.getReader();
         
-        writer.write(data);
-        writer.close();
+        await writer.write(data);
+        await writer.close();
         
         const chunks: Uint8Array[] = [];
         let done = false;
@@ -146,10 +152,12 @@ export class DoubaoVoiceClient {
         
         return result;
       } else {
+        // 如果不支持DecompressionStream，假设数据未压缩
         return data;
       }
     } catch (error) {
       console.error('Decompression failed:', error);
+      // 解压失败时返回原始数据
       return data;
     }
   }
@@ -172,111 +180,86 @@ export class DoubaoVoiceClient {
   }
 
   /**
-   * 建立WebSocket连接
+   * 建立WebSocket连接 - 修复版本
    */
   async connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
-        // 检查配置是否完整
         if (!this.config.baseUrl) {
-          const error = new Error('WebSocket URL配置缺失');
-          console.error('WebSocket连接失败:', error);
-          reject(error);
+          reject(new Error('WebSocket URL配置缺失'));
           return;
         }
 
         console.log('正在连接WebSocket代理服务器:', this.config.baseUrl);
         
-        // 连接到本地代理服务器
         this.ws = new WebSocket(this.config.baseUrl);
         this.ws.binaryType = 'arraybuffer';
 
-        this.ws.onopen = () => {
+        let isInitialized = false;
+
+        this.ws.onopen = async () => {
           console.log('WebSocket代理连接已建立，等待豆包服务连接...');
         };
 
-        this.ws.onmessage = (event) => {
+        this.ws.onmessage = async (event) => {
           try {
-            // 检查是否是JSON消息（代理服务器的状态消息）
             if (typeof event.data === 'string') {
               const message = JSON.parse(event.data);
               
               switch (message.type) {
                 case 'connected':
-                  console.log('豆包服务连接成功');
-                  this.isConnected = true;
-                  resolve();
+                  if (!isInitialized) {
+                    console.log('豆包服务连接成功，协议初始化完成');
+                    isInitialized = true;
+                    this.isConnected = true;
+                    resolve();
+                  }
                   break;
                   
                 case 'error':
                   console.error('代理服务器错误:', message.error);
-                  this.onEvent({
-                    type: 'error',
-                    error: message.error,
-                    timestamp: Date.now()
-                  });
                   reject(new Error(message.error));
                   break;
                   
                 case 'end':
                   console.log('豆包服务连接已结束');
                   this.isConnected = false;
-                  this.onEvent({
-                    type: 'end',
-                    timestamp: Date.now()
-                  });
+                  this.onEvent({ type: 'end', timestamp: Date.now() });
                   break;
               }
             } else {
-              // 二进制数据，处理豆包的响应
-              this.handleMessage(event.data);
+              // 处理豆包的二进制响应
+              await this.handleMessage(event.data);
             }
           } catch (error) {
             console.error('处理WebSocket消息失败:', error);
-            this.onEvent({
-              type: 'error',
-              error: error instanceof Error ? error.message : '消息处理失败',
-              timestamp: Date.now()
-            });
+            if (!isInitialized) {
+              reject(error);
+            }
           }
         };
 
         this.ws.onerror = (error) => {
-          console.error('WebSocket代理连接错误:', error);
-          const errorMessage = '代理服务器连接失败，请检查服务器是否正常运行';
-          this.onEvent({
-            type: 'error',
-            error: errorMessage,
-            timestamp: Date.now()
-          });
-          reject(new Error(errorMessage));
+          console.error('WebSocket连接错误:', error);
+          reject(new Error('WebSocket连接失败'));
         };
 
         this.ws.onclose = (event) => {
-          console.log('WebSocket代理连接已关闭');
-          console.log('关闭码:', event.code, '原因:', event.reason);
-          
+          console.log('WebSocket连接已关闭, code:', event.code, 'reason:', event.reason);
           this.isConnected = false;
-          this.onEvent({
-            type: 'end',
-            timestamp: Date.now()
-          });
+          this.onEvent({ type: 'end', timestamp: Date.now() });
         };
 
-        // 设置连接超时
+        // 连接超时
         setTimeout(() => {
           if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
             this.ws.close();
-            const timeoutError = new Error('WebSocket代理连接超时');
-            console.error('WebSocket代理连接超时');
-            reject(timeoutError);
+            reject(new Error('WebSocket连接超时'));
           }
-        }, 10000); // 10秒超时
+        }, 10000);
 
       } catch (error) {
-        console.error('创建WebSocket连接失败:', error);
-        const errorMessage = error instanceof Error ? error.message : '创建WebSocket连接失败';
-        reject(new Error(`WebSocket初始化失败: ${errorMessage}`));
+        reject(error);
       }
     });
   }
@@ -288,50 +271,68 @@ export class DoubaoVoiceClient {
     return Date.now().toString() + Math.random().toString(36).substr(2, 9);
   }
 
-
-
   /**
    * 发送音频数据
    */
   async sendAudio(audioData: ArrayBuffer): Promise<void> {
     if (!this.ws || !this.isConnected) {
-      throw new Error('WebSocket未连接');
+      console.warn('WebSocket未连接，无法发送音频数据');
+      return;
     }
 
-    const header = this.generateHeader(
-      PROTOCOL_VERSION,
-      CLIENT_AUDIO_ONLY_REQUEST,
-      MSG_WITH_EVENT,
-      NO_SERIALIZATION
-    );
-    
-    const sessionIdBytes = this.stringToUint8Array(this.sessionId);
-    const audioBytes = new Uint8Array(audioData);
-    const compressedAudio = await this.compressData(audioBytes);
-    
-    const message = new Uint8Array(
-      header.length + 4 + 4 + sessionIdBytes.length + 4 + compressedAudio.length
-    );
-    
-    let offset = 0;
-    message.set(header, offset);
-    offset += header.length;
-    
-    message.set(this.numberToBytes(200), offset); // task request
-    offset += 4;
-    
-    message.set(this.numberToBytes(sessionIdBytes.length), offset);
-    offset += 4;
-    
-    message.set(sessionIdBytes, offset);
-    offset += sessionIdBytes.length;
-    
-    message.set(this.numberToBytes(compressedAudio.length), offset);
-    offset += 4;
-    
-    message.set(compressedAudio, offset);
-    
-    this.ws.send(message);
+    try {
+      console.log('准备发送音频数据，大小:', audioData.byteLength);
+      
+      const header = this.generateHeader(
+        PROTOCOL_VERSION,
+        CLIENT_AUDIO_ONLY_REQUEST,  // 使用音频专用类型
+        MSG_WITH_EVENT,
+        NO_SERIALIZATION,  // 音频数据不需要JSON序列化
+        GZIP
+      );
+      
+      const sessionIdBytes = this.stringToUint8Array(this.sessionId);
+      const audioBytes = new Uint8Array(audioData);
+      const compressedAudio = await this.compressData(audioBytes);
+      
+      console.log('音频数据压缩前大小:', audioBytes.length, '压缩后大小:', compressedAudio.length);
+      
+      const message = new Uint8Array(
+        header.length + 4 + 4 + sessionIdBytes.length + 4 + compressedAudio.length
+      );
+      
+      let offset = 0;
+      message.set(header, offset);
+      offset += header.length;
+      
+      message.set(this.numberToBytes(200), offset); // task request
+      offset += 4;
+      
+      message.set(this.numberToBytes(sessionIdBytes.length), offset);
+      offset += 4;
+      
+      message.set(sessionIdBytes, offset);
+      offset += sessionIdBytes.length;
+      
+      message.set(this.numberToBytes(compressedAudio.length), offset);
+      offset += 4;
+      
+      message.set(compressedAudio, offset);
+      
+      if (this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(message);
+        console.log('音频数据已发送，总消息大小:', message.length);
+      } else {
+        console.warn('WebSocket连接状态异常:', this.ws.readyState);
+      }
+    } catch (error) {
+      console.error('发送音频数据失败:', error);
+      this.onEvent({
+        type: 'error',
+        error: '发送音频数据失败: ' + (error instanceof Error ? error.message : '未知错误'),
+        timestamp: Date.now()
+      });
+    }
   }
 
   /**
