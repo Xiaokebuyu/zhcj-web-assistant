@@ -1,0 +1,5 @@
+2025-06-11 14:35:58.916 | INFO     | __main__:register_tool:76 - Registered tool: bash
+2025-06-11 14:35:58.923 | INFO     | __main__:register_tool:76 - Registered tool: browser_use
+2025-06-11 14:35:58.926 | INFO     | __main__:register_tool:76 - Registered tool: str_replace_editor
+2025-06-11 14:35:58.928 | INFO     | __main__:register_tool:76 - Registered tool: terminate
+2025-06-11 14:35:58.928 | INFO     | __main__:run:159 - Starting OpenManus server (stdio mode)

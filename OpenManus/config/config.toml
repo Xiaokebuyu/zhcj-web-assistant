@@ -1,0 +1,15 @@
+ # Global LLM configuration doubao1.6
+[llm]
+model = "doubao-seed-1-6-thinking-250615"                                              # The LLM model to use
+base_url = "https://ark.cn-beijing.volces.com/api/v3"   # API endpoint URL
+api_key = "73dd2c20-cdce-45a3-b0c1-a7475411a4cd"                                              # Your API key
+temperature = 0.0                                                       # Controls randomness
+max_tokens = 8096                                                       # Maximum number of tokens in the response
+
+
+[llm.vision]
+model = "doubao-seed-1-6-thinking-250615"                                      # The vision model to use
+base_url = "https://ark.cn-beijing.volces.com/api/v3"  # API endpoint URL for vision model
+api_key = "73dd2c20-cdce-45a3-b0c1-a7475411a4cd"                                             # Your API key for vision model
+max_tokens = 8192                                                      # Maximum number of tokens in the response
+temperature = 0.0                                                      # Controls randomness for vision model
