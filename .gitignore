@@ -46,3 +46,5 @@ venv/
 .venv/
 
 *.md
+
+config.py
