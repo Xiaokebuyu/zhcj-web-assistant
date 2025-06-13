@@ -48,3 +48,5 @@ venv/
 *.md
 
 config.py
+*storybook.log
+storybook-static
