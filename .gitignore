@@ -50,3 +50,29 @@ venv/
 config.py
 *storybook.log
 storybook-static
+
+stories/
+@/stories
+
+@/.storybook
+
+@/temp
+
+# Vitest 测试配置
+vitest.config.ts
+vitest.shims.d.ts
+
+# Storybook 相关
+@/.storybook
+@/stories
+
+# 日志文件
+@/logs
+
+# 临时文件
+@/temp
+
+# 文档和配置文件
+OPENMANUS_INTEGRATION.md
+postcss.config.mjs
+test-openmanus-integration.js
