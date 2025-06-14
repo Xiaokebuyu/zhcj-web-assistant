@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { MessageCircle, X, Minus, Send, Mic, Volume2, VolumeX, Settings, Square, FileText, RefreshCw, Search, Phone } from 'lucide-react';
+import { MessageCircle, X, Minus, Send, Mic, Volume2, VolumeX, Settings, Square, FileText, RefreshCw, Search, Phone, Sparkles } from 'lucide-react';
 import { ChatMessage, AssistantConfig, VoiceState, VoiceSettings, STTConfig, StreamingSTTEvent, ToolCall, ToolProgress, PageContext, ContextStatus, ChatRequest, AssistantMode, VoiceCallState, DoubaoVoiceConfig } from '@/types';
 
 // 本地类型定义
@@ -1478,15 +1478,48 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   };
 
   if (!isOpen) {
-    // Anthropic 风格悬浮按钮
+    // Anthropic 风格悬浮按钮 - 使用内联样式确保显示
     return (
       <div className={getPositionStyles()}>
         <button
           onClick={() => setIsOpen(true)}
-          className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white rounded-2xl p-4 shadow-2xl transition-all duration-300 hover:scale-105 hover:shadow-orange-200/50 border border-orange-400/20 backdrop-blur-sm"
-          aria-label="打开AI助手"
+          style={{
+            backgroundColor: '#000000',
+            color: '#ffffff',
+            padding: '12px 20px',
+            border: 'none',
+            borderRadius: '16px',
+            fontSize: '14px',
+            fontWeight: '500',
+            cursor: 'pointer',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+            transition: 'all 0.3s ease',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            transform: 'scale(1)',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = '#1f2937';
+            e.currentTarget.style.transform = 'scale(1.05)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = '#000000';
+            e.currentTarget.style.transform = 'scale(1)';
+          }}
+          aria-label="Ask AI"
         >
-          <MessageCircle size={24} strokeWidth={2} />
+          <Sparkles 
+            size={20} 
+            strokeWidth={2} 
+            style={{
+              animation: 'pulse 2s infinite',
+            }}
+          />
+          <span className="ask-ai-text">
+            Ask AI
+          </span>
         </button>
       </div>
     );
