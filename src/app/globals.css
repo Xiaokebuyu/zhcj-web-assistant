@@ -1,5 +1,21 @@
 @import "tailwindcss";
 
+/* AI助手按钮响应式文字 */
+.ask-ai-text {
+  display: none;
+}
+
+@media (min-width: 640px) {
+  .ask-ai-text {
+    display: inline;
+  }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
 :root {
   --background: #ffffff;
   --foreground: #171717;

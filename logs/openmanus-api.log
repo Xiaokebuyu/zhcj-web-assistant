@@ -1,8 +1,13 @@
 INFO:     Will watch for changes in these directories: ['/home/xiaobuyu/workplace/网页悬浮框助手/ai-assistant/openmanus-api-service']
 INFO:     Uvicorn running on http://127.0.0.1:8001 (Press CTRL+C to quit)
-INFO:     Started reloader process [3845] using WatchFiles
-2025-06-13 14:47:55,010 - browser_use.telemetry.service - INFO - Anonymized telemetry enabled. See https://docs.browser-use.com/development/telemetry for more information.
-INFO:     Started server process [3848]
+INFO:     Started reloader process [14420] using WatchFiles
+2025-06-14 21:14:59,752 - browser_use.telemetry.service - INFO - Anonymized telemetry enabled. See https://docs.browser-use.com/development/telemetry for more information.
+INFO:     Started server process [14423]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
-INFO:     127.0.0.1:57982 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47038 - "GET /api/health HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [14423]
+INFO:     Stopping reloader process [14420]

@@ -63,8 +63,8 @@ vitest.config.ts
 vitest.shims.d.ts
 
 # Storybook 相关
-@/.storybook
-@/stories
+.storybook/
+stories/
 
 # 日志文件
 @/logs
@@ -74,5 +74,5 @@ vitest.shims.d.ts
 
 # 文档和配置文件
 OPENMANUS_INTEGRATION.md
-postcss.config.mjs
+
 test-openmanus-integration.js
