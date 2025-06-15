@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { MessageCircle, X, Minus, Send, Mic, Volume2, VolumeX, Settings, Square, FileText, RefreshCw, Search, Phone, Sparkles } from 'lucide-react';
+import { MessageCircle, X, Search, Send, Mic, Copy, ThumbsUp, ThumbsDown, ChevronRight, FileText, Volume2, VolumeX, Settings, Square, RefreshCw, Phone, Sparkles, Minus } from 'lucide-react';
 import { ChatMessage, AssistantConfig, VoiceState, VoiceSettings, STTConfig, StreamingSTTEvent, ToolCall, ToolProgress, PageContext, ContextStatus, ChatRequest, AssistantMode, VoiceCallState, DoubaoVoiceConfig } from '@/types';
 
 // 本地类型定义
@@ -40,7 +40,6 @@ const VOICE_OPTIONS = [
 
 export default function FloatingAssistant({ config = {}, onError }: FloatingAssistantProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [isMinimized, setIsMinimized] = useState(false);
   const [messages, setMessages] = useState<ExtendedChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -1177,171 +1176,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     sendMessage(inputValue);
   };
 
-  // 渲染消息组件
-  const renderMessage = (message: ExtendedChatMessage) => {
-    return (
-      <div
-        key={message.id}
-        className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'} animate-in fade-in slide-in-from-bottom-2 duration-300`}
-      >
-        <div className={`flex gap-3 max-w-[80%] ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-          {/* 头像 */}
-          <div className={`w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 ${
-            message.role === 'user' 
-              ? 'bg-gradient-to-r from-blue-500 to-blue-600' 
-              : message.isThinking
-              ? 'bg-gradient-to-r from-blue-500 to-blue-600'
-              : 'bg-gradient-to-r from-orange-500 to-orange-600'
-          }`}>
-            {message.role === 'user' ? (
-              <span className="text-white text-sm font-medium">你</span>
-            ) : message.isThinking ? (
-              <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
-            ) : (
-              <MessageCircle size={14} className="text-white" strokeWidth={2.5} />
-            )}
-          </div>
-          
-          {/* 消息气泡 */}
-          <div
-            className={`px-4 py-3 rounded-2xl text-sm leading-relaxed shadow-sm ${
-              message.role === 'user'
-                ? 'bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-br-md'
-                : message.isThinking
-                ? 'bg-blue-50 border border-blue-200 text-blue-800 rounded-bl-md'
-                : 'bg-white border border-gray-100 text-gray-800 rounded-bl-md'
-            }`}
-          >
-            <div className="whitespace-pre-wrap">{message.content}</div>
-            {message.isVoice && (
-              <span className="ml-2 inline-flex items-center">
-                <Mic size={12} className="opacity-75" />
-              </span>
-            )}
-            {message.toolCalls && (
-              <span className="ml-2 inline-flex items-center text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">
-                使用了工具
-              </span>
-            )}
-            {message.searchSources && message.searchSources.length > 0 && (
-              <span className="ml-2 inline-flex items-center text-xs bg-purple-100 text-purple-600 px-2 py-0.5 rounded-full">
-                <Search size={10} className="mr-1" />
-                网络搜索
-              </span>
-            )}
-            {message.contextUsed && message.pageInfo && (
-              <span className="ml-2 inline-flex items-center text-xs bg-green-100 text-green-600 px-2 py-0.5 rounded-full">
-                <FileText size={10} className="mr-1" />
-                页面内容
-              </span>
-            )}
 
-            {/* 工具调用进度显示 */}
-            {message.isThinking && toolProgress.isToolCalling && (
-              <div className="mt-3 p-3 bg-blue-100 rounded-lg">
-                <div className="flex items-center gap-2 text-sm text-blue-700 mb-2">
-                  <div className="animate-spin rounded-full h-3 w-3 border-2 border-blue-500 border-t-transparent"></div>
-                  <span>{toolProgress.currentTool}</span>
-                </div>
-                <div className="text-xs text-blue-600 mb-2">{toolProgress.progress}</div>
-                <div className="w-full bg-blue-200 rounded-full h-1.5">
-                  <div 
-                    className="bg-blue-500 h-1.5 rounded-full transition-all duration-300" 
-                    style={{ width: `${(toolProgress.step / toolProgress.totalSteps) * 100}%` }}
-                  ></div>
-                </div>
-              </div>
-            )}
-            
-            {/* 显示页面上下文使用状态 */}
-            {message.contextUsed && message.pageInfo && (
-              <div className="mt-3 pt-2 border-t border-green-200">
-                <div className="text-xs text-green-700 flex items-center gap-1">
-                  <FileText size={12} />
-                  <span>基于页面&ldquo;{message.pageInfo.title}&rdquo;的内容回答</span>
-                </div>
-              </div>
-            )}
-
-            {/* 显示搜索来源 */}
-            {message.searchSources && message.searchSources.length > 0 && (
-              <div className="mt-3 p-3 bg-gray-50 rounded-lg border">
-                <div className="flex items-center gap-2 mb-2">
-                  <Search size={16} className="text-gray-500" />
-                  <span className="text-sm font-medium text-gray-700">信息来源</span>
-                </div>
-                <div className="space-y-2">
-                  {message.searchSources.slice(0, 3).map((source, index) => (
-                    <div key={index} className="flex items-start gap-2">
-                      <div className="w-4 h-4 mt-0.5 flex-shrink-0">
-                        {source.siteIcon ? (
-                          <>
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={source.siteIcon} alt="" className="w-4 h-4 rounded" />
-                          </>
-                        ) : (
-                          <div className="w-4 h-4 bg-gray-300 rounded"></div>
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <a 
-                          href={source.url} 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          className="text-sm text-blue-600 hover:text-blue-800 line-clamp-1 block"
-                        >
-                          {source.name}
-                        </a>
-                        <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">
-                          {source.snippet}
-                        </p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-xs text-gray-400">{source.siteName}</span>
-                          {source.datePublished && (
-                            <span className="text-xs text-gray-400">
-                              {new Date(source.datePublished).toLocaleDateString('zh-CN')}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  {message.searchSources.length > 3 && (
-                    <div className="text-xs text-gray-500 text-center pt-2">
-                      还有 {message.searchSources.length - 3} 个来源...
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-            
-            {/* 语音播放按钮（仅助手消息） */}
-            {message.role === 'assistant' && !message.isThinking && enableVoice && (
-              <div className="flex items-center space-x-2 mt-2 pt-2 border-t border-gray-200">
-                {message.audioUrl ? (
-                  <button
-                    onClick={() => playAudio(message.audioUrl!)}
-                    className="flex items-center space-x-1 text-xs text-gray-600 hover:text-orange-500 transition-colors"
-                  >
-                    <Volume2 size={12} />
-                    <span>播放</span>
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => regenerateSpeech(message.id, message.content)}
-                    className="flex items-center space-x-1 text-xs text-gray-600 hover:text-orange-500 transition-colors"
-                  >
-                    <VolumeX size={12} />
-                    <span>生成语音</span>
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  };
 
   // 渲染页面上下文状态指示器
   const renderContextStatus = () => {
@@ -1466,319 +1301,490 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     );
   };
 
-  // 位置样式
-  const getPositionStyles = () => {
-    const base = 'fixed z-50';
-    switch (position) {
-      case 'bottom-left': return `${base} bottom-4 left-4`;
-      case 'top-right': return `${base} top-4 right-4`;
-      case 'top-left': return `${base} top-4 left-4`;
-      default: return `${base} bottom-4 right-4`;
-    }
-  };
+  // 示例问题
+  const exampleQuestions = [
+    "这个页面主要讲了什么？",
+    "帮我总结一下页面内容",
+    "有什么可以帮助我的吗？"
+  ];
 
-  if (!isOpen) {
-    // Anthropic 风格悬浮按钮 - 使用内联样式确保显示
-    return (
-      <div className={getPositionStyles()}>
-        <button
-          onClick={() => setIsOpen(true)}
-          style={{
-            backgroundColor: '#000000',
-            color: '#ffffff',
-            padding: '12px 20px',
-            border: 'none',
-            borderRadius: '16px',
-            fontSize: '14px',
-            fontWeight: '500',
-            cursor: 'pointer',
-            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-            transition: 'all 0.3s ease',
-            backdropFilter: 'blur(4px)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '12px',
-            transform: 'scale(1)',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = '#1f2937';
-            e.currentTarget.style.transform = 'scale(1.05)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = '#000000';
-            e.currentTarget.style.transform = 'scale(1)';
-          }}
-          aria-label="Ask AI"
-        >
-          <Sparkles 
-            size={20} 
-            strokeWidth={2} 
-            style={{
-              animation: 'pulse 2s infinite',
-            }}
-          />
-          <span className="ask-ai-text">
-            Ask AI
-          </span>
-        </button>
+  // 初始界面组件
+  const InitialView = () => (
+    <div className="flex-1 p-6">
+      <div className="flex gap-4">
+        {/* AI 标志 */}
+        <div className="w-20 h-20 bg-black rounded-lg flex items-center justify-center flex-shrink-0">
+          <span className="text-white text-2xl font-bold">AI</span>
+        </div>
+        
+        {/* 介绍文本 */}
+        <div className="flex-1">
+          <p className="text-gray-900 mb-2">你好！</p>
+          <p className="text-gray-700">
+            我是基于文档、帮助文章和其他内容训练的AI助手。
+          </p>
+          <p className="text-gray-700 mt-2">
+            有什么关于 <span className="bg-black text-white px-2 py-0.5 rounded">AI助手</span> 的问题都可以问我
+          </p>
+        </div>
       </div>
-    );
-  }
-
-  return (
-    <>
-      {/* 隐藏的音频元素 */}
-      <audio ref={audioRef} />
-
-      <div className={getPositionStyles()}>
-        <div className={`bg-white/95 backdrop-blur-xl border border-gray-200/60 rounded-2xl shadow-2xl transition-all duration-300 ${
-        isMinimized ? 'w-80 h-14' : 'w-96 h-[500px]'
-      } overflow-hidden`}>
-        {/* Anthropic 风格头部 */}
-        <div className="flex items-center justify-between p-4 border-b border-gray-100 bg-gradient-to-r from-orange-50 to-amber-50">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-gradient-to-r from-orange-500 to-orange-600 rounded-xl flex items-center justify-center">
-              {assistantMode === 'voice-call' ? (
-                <Phone size={16} className="text-white" strokeWidth={2.5} />
-              ) : (
-                <MessageCircle size={16} className="text-white" strokeWidth={2.5} />
-              )}
-            </div>
-            <div>
-              <h3 className="font-semibold text-gray-800 text-lg">AI 助手</h3>
-              {assistantMode === 'voice-call' && (
-                <div className="text-xs text-gray-600">豆包语音通话</div>
-              )}
-            </div>
-          </div>
-          
-          {/* 模式切换器 */}
-          <div className="flex items-center gap-1 bg-white rounded-lg p-1 shadow-sm">
+      
+      {/* 示例问题 */}
+      <div className="mt-8">
+        <p className="text-xs text-gray-500 uppercase tracking-wider mb-3">示例问题</p>
+        <div className="space-y-2">
+          {exampleQuestions.map((question, idx) => (
             <button
-              onClick={() => switchMode('text')}
-              className={`px-3 py-1 rounded-md text-xs font-medium transition-all duration-200 ${
-                assistantMode === 'text'
-                  ? 'bg-orange-100 text-orange-700 shadow-sm'
-                  : 'text-gray-600 hover:text-gray-800'
-              }`}
+              key={idx}
+              onClick={() => {
+                setInputValue(question);
+                inputRef.current?.focus();
+              }}
+              className="w-full p-3 text-left text-gray-700 bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors"
             >
-              💬 文字
+              {question}
             </button>
-            <button
-              onClick={() => switchMode('voice-call')}
-              className={`px-3 py-1 rounded-md text-xs font-medium transition-all duration-200 ${
-                assistantMode === 'voice-call'
-                  ? 'bg-orange-100 text-orange-700 shadow-sm'
-                  : 'text-gray-600 hover:text-gray-800'
-              }`}
-            >
-              📞 通话
-            </button>
-          </div>
-          <div className="flex gap-1">
-            {enableVoice && (
-              <button
-                onClick={() => setShowSettings(!showSettings)}
-                className="hover:bg-orange-100 p-2 rounded-xl transition-colors duration-200 text-gray-600 hover:text-orange-600"
-                aria-label="语音设置"
-              >
-                <Settings size={18} strokeWidth={2} />
-              </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+
+  // 对话视图组件
+  const ChatView = () => (
+    <div className="flex-1 overflow-y-auto p-6">
+      {/* 页面上下文状态 */}
+      {renderContextStatus()}
+      
+      {/* 实时转录显示区域 */}
+      {renderTranscriptDisplay()}
+
+      <div className="space-y-4">
+        {messages.map((message) => (
+          <div key={message.id}>
+            {/* 消息 */}
+            <div className="flex gap-3">
+              {/* 头像 */}
+              <div className="w-8 h-8 bg-black rounded-full flex items-center justify-center flex-shrink-0">
+                {message.role === 'user' ? (
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="white">
+                    <path d="M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM12.735 14c.618 0 1.093-.561.872-1.139a6.002 6.002 0 0 0-11.215 0c-.22.578.254 1.139.872 1.139h9.47z"/>
+                  </svg>
+                ) : (
+                  <span className="text-white text-xs font-bold">AI</span>
+                )}
+              </div>
+              
+              {/* 内容 */}
+              <div className="flex-1">
+                <p className={`text-gray-900 ${message.isThinking ? 'text-gray-500 italic' : ''}`}>
+                  {message.content}
+                  {message.isThinking && <span className="ml-1 animate-pulse">...</span>}
+                </p>
+                
+                {message.isVoice && (
+                  <span className="ml-2 inline-flex items-center">
+                    <Mic size={12} className="opacity-75" />
+                  </span>
+                )}
+                {message.toolCalls && (
+                  <span className="ml-2 inline-flex items-center text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">
+                    使用了工具
+                  </span>
+                )}
+
+                {/* 工具调用进度显示 */}
+                {message.isThinking && toolProgress.isToolCalling && (
+                  <div className="mt-3 p-3 bg-blue-100 rounded-lg">
+                    <div className="flex items-center gap-2 text-sm text-blue-700 mb-2">
+                      <div className="animate-spin rounded-full h-3 w-3 border-2 border-blue-500 border-t-transparent"></div>
+                      <span>{toolProgress.currentTool}</span>
+                    </div>
+                    <div className="text-xs text-blue-600 mb-2">{toolProgress.progress}</div>
+                    <div className="w-full bg-blue-200 rounded-full h-1.5">
+                      <div 
+                        className="bg-blue-500 h-1.5 rounded-full transition-all duration-300" 
+                        style={{ width: `${(toolProgress.step / toolProgress.totalSteps) * 100}%` }}
+                      ></div>
+                    </div>
+                  </div>
+                )}
+                
+                {/* 显示页面上下文使用状态 */}
+                {message.contextUsed && message.pageInfo && (
+                  <div className="mt-3 pt-2 border-t border-green-200">
+                    <div className="text-xs text-green-700 flex items-center gap-1">
+                      <FileText size={12} />
+                      <span>基于页面&ldquo;{message.pageInfo.title}&rdquo;的内容回答</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* 显示搜索来源 */}
+                {message.searchSources && message.searchSources.length > 0 && (
+                  <div className="mt-4">
+                    <p className="text-sm text-gray-600 mb-2">信息来源</p>
+                    <div className="space-y-2">
+                      {message.searchSources.slice(0, 3).map((source, idx) => (
+                        <a
+                          key={idx}
+                          href={source.url}
+                          className="flex items-center gap-3 p-3 bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors group"
+                        >
+                          <FileText size={16} className="text-gray-400 flex-shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-gray-900 group-hover:text-blue-600">{source.name}</p>
+                            <p className="text-xs text-gray-500">
+                              {source.siteName}
+                            </p>
+                          </div>
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                
+                {/* 语音播放按钮（仅助手消息） */}
+                {message.role === 'assistant' && !message.isThinking && enableVoice && (
+                  <div className="flex items-center space-x-2 mt-2 pt-2 border-t border-gray-200">
+                    {message.audioUrl ? (
+                      <button
+                        onClick={() => playAudio(message.audioUrl!)}
+                        className="flex items-center space-x-1 text-xs text-gray-600 hover:text-orange-500 transition-colors"
+                      >
+                        <Volume2 size={12} />
+                        <span>播放</span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => regenerateSpeech(message.id, message.content)}
+                        className="flex items-center space-x-1 text-xs text-gray-600 hover:text-orange-500 transition-colors"
+                      >
+                        <VolumeX size={12} />
+                        <span>生成语音</span>
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            {/* 操作按钮 */}
+            {message.role === 'assistant' && !message.isThinking && (
+              <div className="flex items-center gap-1 mt-2 ml-11">
+                <button 
+                  onClick={() => {
+                    navigator.clipboard.writeText(message.content);
+                  }}
+                  className="p-1.5 hover:bg-gray-100 rounded transition-colors"
+                  title="复制"
+                >
+                  <Copy size={14} className="text-gray-400" />
+                </button>
+                <button 
+                  className="p-1.5 hover:bg-gray-100 rounded transition-colors"
+                  title="点赞"
+                >
+                  <ThumbsUp size={14} className="text-gray-400" />
+                </button>
+                <button 
+                  className="p-1.5 hover:bg-gray-100 rounded transition-colors"
+                  title="点踩"
+                >
+                  <ThumbsDown size={14} className="text-gray-400" />
+                </button>
+              </div>
             )}
-            <button
-              onClick={() => setIsMinimized(!isMinimized)}
-              className="hover:bg-orange-100 p-2 rounded-xl transition-colors duration-200 text-gray-600 hover:text-orange-600"
-              aria-label={isMinimized ? "展开" : "最小化"}
+          </div>
+        ))}
+
+        {isLoading && (
+          <div className="flex gap-3">
+            <div className="w-8 h-8 bg-black rounded-full flex items-center justify-center">
+              <span className="text-white text-xs font-bold">AI</span>
+            </div>
+            <div className="flex-1">
+              <p className="text-gray-500 italic">
+                正在思考<span className="ml-1 animate-pulse">...</span>
+              </p>
+            </div>
+          </div>
+        )}
+
+        <div ref={messagesEndRef} />
+      </div>
+    </div>
+  );
+
+  // 豆包语音界面组件
+  const DoubaoVoiceView = () => (
+    <div className="flex-1">
+      {assistantMode === 'voice-call' ? (
+        <VoiceCallMode
+          voiceCallState={voiceCallState}
+          onStartCall={startVoiceCall}
+          onEndCall={endVoiceCall}
+          onToggleMute={toggleVoiceCallMute}
+          onTogglePause={toggleVoiceCallPause}
+          className="flex-1"
+        />
+      ) : (
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="text-center">
+            <div className="w-24 h-24 bg-gradient-to-br from-purple-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+              </svg>
+            </div>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">豆包语音助手</h3>
+            <p className="text-gray-600 mb-6">点击开始语音对话</p>
+            <button 
+              onClick={startVoiceCall}
+              className="px-6 py-2.5 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg hover:from-purple-600 hover:to-purple-700 transition-all shadow-sm"
             >
-              <Minus size={18} strokeWidth={2} />
-            </button>
-            <button
-              onClick={() => setIsOpen(false)}
-              className="hover:bg-red-100 p-2 rounded-xl transition-colors duration-200 text-gray-600 hover:text-red-600"
-              aria-label="关闭"
-            >
-              <X size={18} strokeWidth={2} />
+              开始通话
             </button>
           </div>
         </div>
-
-        {/* 语音设置面板 */}
-        {!isMinimized && showSettings && (
-          <div className="p-4 border-b bg-gray-50 space-y-4">
-            <h3 className="font-medium text-gray-900">语音设置</h3>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                语音类型
-              </label>
-              <select
-                value={voiceSettings.voice}
-                onChange={(e) => setVoiceSettings(prev => ({ ...prev, voice: e.target.value }))}
-                className="w-full p-2 border border-gray-300 rounded-md text-sm"
-              >
-                {VOICE_OPTIONS.map(option => (
-                  <option key={option.id} value={option.id}>
-                    {option.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                语速: {voiceSettings.rate}
-              </label>
-              <input
-                type="range"
-                min="-50"
-                max="100"
-                value={parseInt(voiceSettings.rate)}
-                onChange={(e) => setVoiceSettings(prev => ({ ...prev, rate: `${e.target.value}%` }))}
-                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                音调: {voiceSettings.pitch}
-              </label>
-              <input
-                type="range"
-                min="-50"
-                max="50"
-                value={parseInt(voiceSettings.pitch)}
-                onChange={(e) => setVoiceSettings(prev => ({ ...prev, pitch: `${e.target.value}%` }))}
-                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-              />
-            </div>
-
-            <div className="flex items-center space-x-2">
-              <input
-                type="checkbox"
-                id="autoPlay"
-                checked={voiceSettings.autoPlay}
-                onChange={(e) => setVoiceSettings(prev => ({ ...prev, autoPlay: e.target.checked }))}
-                className="rounded border-gray-300"
-              />
-              <label htmlFor="autoPlay" className="text-sm text-gray-700">
-                自动播放回复语音
-              </label>
-            </div>
-          </div>
-        )}
-
-        {/* 内容区域 */}
-        {!isMinimized && (
-          <>
-            {assistantMode === 'voice-call' ? (
-              /* 语音通话模式 */
-              <VoiceCallMode
-                voiceCallState={voiceCallState}
-                onStartCall={startVoiceCall}
-                onEndCall={endVoiceCall}
-                onToggleMute={toggleVoiceCallMute}
-                onTogglePause={toggleVoiceCallPause}
-                className="flex-1"
-              />
-            ) : (
-              /* 文字对话模式 */
-              <>
-                <div className="flex-1 overflow-y-auto p-4 h-80 space-y-4 bg-gradient-to-b from-white to-gray-50/50">
-                  {/* 页面上下文状态 */}
-                  {renderContextStatus()}
-                  
-                  {/* 实时转录显示区域 */}
-                  {renderTranscriptDisplay()}
-                  {messages.length === 0 ? (
-                <div className="text-center py-8">
-                  <div className="w-16 h-16 bg-gradient-to-r from-orange-100 to-amber-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                    <MessageCircle size={24} className="text-orange-500" strokeWidth={2} />
-                  </div>
-                  <p className="text-gray-600 text-sm leading-relaxed">
-                    你好！我是你的 AI 助手<br />
-                    {pageContext ? '我可以帮你分析当前页面内容，或回答其他问题' : '有什么可以帮助你的吗？'}
-                  </p>
-                </div>
-              ) : (
-                messages.map(renderMessage)
-              )}
-              {isLoading && (
-                <div className="flex justify-start animate-in fade-in duration-300">
-                  <div className="flex gap-3">
-                    <div className="w-8 h-8 bg-gradient-to-r from-orange-500 to-orange-600 rounded-xl flex items-center justify-center">
-                      <MessageCircle size={14} className="text-white" strokeWidth={2.5} />
-                    </div>
-                    <div className="bg-white border border-gray-100 px-4 py-3 rounded-2xl rounded-bl-md text-sm text-gray-600 shadow-sm">
-                      <div className="flex items-center gap-1">
-                        正在思考
-                        <div className="flex gap-1">
-                          <div className="w-1 h-1 bg-orange-400 rounded-full animate-bounce" style={{animationDelay: '0ms'}}></div>
-                          <div className="w-1 h-1 bg-orange-400 rounded-full animate-bounce" style={{animationDelay: '150ms'}}></div>
-                          <div className="w-1 h-1 bg-orange-400 rounded-full animate-bounce" style={{animationDelay: '300ms'}}></div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-                  <div ref={messagesEndRef} />
-                </div>
-
-                {/* Anthropic 风格输入区域 */}
-                <div className="border-t border-gray-100 p-4 bg-white">
-                  <form onSubmit={handleSubmit} className="flex gap-3">
-                    <div className="flex-1 relative">
-                      <input
-                        ref={inputRef}
-                        type="text"
-                        value={inputValue}
-                        onChange={(e) => setInputValue(e.target.value)}
-                        placeholder={pageContext ? "问我关于这个页面的任何问题..." : "输入消息..."}
-                        className="w-full px-4 py-3 border border-gray-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-300 transition-all duration-200 bg-gray-50/50 hover:bg-white"
-                        disabled={isLoading || voiceState.isListening}
-                      />
-                    </div>
-                    
-                    <div className="flex gap-2">
-                      {enableVoice && (
-                        <button
-                          type="button"
-                          onClick={voiceState.isListening ? stopListening : startListening}
-                          disabled={isLoading && !voiceState.isListening}
-                          className={`p-3 rounded-2xl transition-all duration-200 ${
-                            voiceState.isListening
-                              ? 'bg-red-500 hover:bg-red-600 text-white animate-pulse'
-                              : 'bg-blue-500 hover:bg-blue-600 text-white'
-                          } ${
-                            (isLoading && !voiceState.isListening) ? 'opacity-50 cursor-not-allowed' : ''
-                          }`}
-                          aria-label="语音输入"
-                        >
-                          {voiceState.isListening ? (
-                            <Square size={18} strokeWidth={2} />
-                          ) : (
-                            <Mic size={18} strokeWidth={2} />
-                          )}
-                        </button>
-                      )}
-                      
-                      <button
-                        type="submit"
-                        disabled={!inputValue.trim() || isLoading || voiceState.isListening}
-                        className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 disabled:from-gray-300 disabled:to-gray-400 text-white p-3 rounded-2xl transition-all duration-200 disabled:cursor-not-allowed shadow-lg shadow-orange-200/50 hover:shadow-orange-300/50"
-                        aria-label="发送消息"
-                      >
-                        <Send size={18} strokeWidth={2} />
-                      </button>
-                    </div>
-                  </form>
-                </div>
-              </>
-            )}
-          </>
-        )}
-      </div>
+      )}
     </div>
+  );
+
+  return (
+    <>
+      {/* 悬浮按钮 */}
+      {!isOpen && (
+        <button
+          onClick={() => setIsOpen(true)}
+          className="fixed bottom-6 right-6 w-14 h-14 bg-white rounded-full shadow-lg hover:shadow-xl transition-all duration-200 flex items-center justify-center"
+        >
+          <MessageCircle size={24} className="text-gray-700" />
+        </button>
+      )}
+
+      {/* 隐藏的音频元素 */}
+      <audio ref={audioRef} />
+
+      {/* 主窗口 */}
+      {isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          {/* 背景遮罩 */}
+          <div 
+            className="absolute inset-0 bg-black/20"
+            onClick={() => setIsOpen(false)}
+          />
+          
+          {/* 对话窗口 */}
+          <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-2xl h-[700px] flex flex-col overflow-hidden">
+            {/* 顶部栏 */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+              <h1 className="text-lg font-normal text-gray-900">Ask AI</h1>
+              
+              <div className="flex items-center gap-4">
+                {/* 模式切换 Toggle */}
+                <div className="relative bg-gray-100 rounded-full p-1 flex items-center min-w-fit">
+                  {/* 滑块背景 */}
+                  <div 
+                    className={`absolute h-10 bg-white rounded-full shadow-md transition-all duration-300 ease-in-out ${
+                      assistantMode === 'text' 
+                        ? 'w-[140px] translate-x-0' 
+                        : 'w-[135px] translate-x-[140px]'
+                    }`}
+                  />
+                  
+                  {/* 选项按钮 */}
+                  <button
+                    onClick={() => switchMode('text')}
+                    className={`relative z-10 px-4 py-2 text-sm font-medium rounded-full transition-colors duration-300 flex items-center gap-2 min-w-[140px] justify-center ${
+                      assistantMode === 'text' ? 'text-gray-900' : 'text-gray-600'
+                    }`}
+                  >
+                    <span className={`w-5 h-5 rounded-full flex items-center justify-center transition-colors duration-300 ${
+                      assistantMode === 'text' ? 'bg-gray-900' : 'bg-gray-400'
+                    }`}>
+                      <span className="text-[10px] font-bold text-white">AI</span>
+                    </span>
+                    <span className="text-sm">Ask Deepseek</span>
+                  </button>
+                  
+                  <button
+                    onClick={() => switchMode('voice-call')}
+                    className={`relative z-10 px-4 py-2 text-sm font-medium rounded-full transition-colors duration-300 flex items-center gap-2 min-w-[135px] justify-center ${
+                      assistantMode === 'voice-call' ? 'text-gray-900' : 'text-gray-600'
+                    }`}
+                  >
+                    <span className={`w-5 h-5 rounded-full flex items-center justify-center transition-colors duration-300 ${
+                      assistantMode === 'voice-call' ? 'bg-gray-900' : 'bg-gray-400'
+                    }`}>
+                      <span className="text-[10px] font-bold text-white">豆</span>
+                    </span>
+                    <span className="text-sm">Call Doubao</span>
+                  </button>
+                </div>
+                
+                {/* 设置按钮 */}
+                {enableVoice && (
+                  <button
+                    onClick={() => setShowSettings(!showSettings)}
+                    className="p-2 hover:bg-gray-100 rounded-lg transition-colors duration-200"
+                    title="语音设置"
+                  >
+                    <Settings size={18} className="text-gray-500" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* 语音设置面板 */}
+            {showSettings && (
+              <div className="p-4 border-b bg-gray-50 space-y-4">
+                <h3 className="font-medium text-gray-900">语音设置</h3>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    语音类型
+                  </label>
+                  <select
+                    value={voiceSettings.voice}
+                    onChange={(e) => setVoiceSettings(prev => ({ ...prev, voice: e.target.value }))}
+                    className="w-full p-2 border border-gray-300 rounded-md text-sm"
+                  >
+                    {VOICE_OPTIONS.map(option => (
+                      <option key={option.id} value={option.id}>
+                        {option.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    语速: {voiceSettings.rate}
+                  </label>
+                  <input
+                    type="range"
+                    min="-50"
+                    max="100"
+                    value={parseInt(voiceSettings.rate)}
+                    onChange={(e) => setVoiceSettings(prev => ({ ...prev, rate: `${e.target.value}%` }))}
+                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    音调: {voiceSettings.pitch}
+                  </label>
+                  <input
+                    type="range"
+                    min="-50"
+                    max="50"
+                    value={parseInt(voiceSettings.pitch)}
+                    onChange={(e) => setVoiceSettings(prev => ({ ...prev, pitch: `${e.target.value}%` }))}
+                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                  />
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="autoPlay"
+                    checked={voiceSettings.autoPlay}
+                    onChange={(e) => setVoiceSettings(prev => ({ ...prev, autoPlay: e.target.checked }))}
+                    className="rounded border-gray-300"
+                  />
+                  <label htmlFor="autoPlay" className="text-sm text-gray-700">
+                    自动播放回复语音
+                  </label>
+                </div>
+              </div>
+            )}
+
+            {/* 内容区域 */}
+            {assistantMode === 'text' ? (
+              messages.length === 0 ? <InitialView /> : <ChatView />
+            ) : (
+              <DoubaoVoiceView />
+            )}
+
+            {/* 底部输入区 */}
+            {assistantMode === 'text' && (
+              <div className="border-t border-gray-100 p-4">
+                {/* 输入框 */}
+                <div className="flex items-center gap-2 p-3 bg-gray-50 border border-gray-200 rounded-lg focus-within:border-gray-300">
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    value={inputValue}
+                    onChange={(e) => setInputValue(e.target.value)}
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        sendMessage(inputValue);
+                      }
+                    }}
+                    placeholder="How do I get started?"
+                    className="flex-1 bg-transparent outline-none text-sm text-gray-700 placeholder-gray-500"
+                    disabled={isLoading || voiceState.isListening}
+                  />
+                  {enableVoice && (
+                    <button 
+                      type="button"
+                      onClick={voiceState.isListening ? stopListening : startListening}
+                      disabled={isLoading && !voiceState.isListening}
+                      className="p-1 hover:bg-gray-200 rounded transition-colors"
+                    >
+                      <Mic size={18} className="text-gray-500" />
+                    </button>
+                  )}
+                  <button
+                    onClick={() => sendMessage(inputValue)}
+                    disabled={!inputValue.trim() || isLoading || voiceState.isListening}
+                    className="p-1 hover:bg-gray-200 rounded transition-colors disabled:opacity-50"
+                  >
+                    <Send size={18} className="text-gray-500" />
+                  </button>
+                  <ChevronRight size={18} className="text-gray-400" />
+                </div>
+                
+                {/* 底部信息 */}
+                <div className="flex items-center justify-between mt-3">
+                  <div className="flex items-center gap-2 text-xs text-gray-500">
+                    <span>By</span>
+                    <div className="flex items-center gap-1">
+                      <div className="w-4 h-4 bg-gray-300 rounded" />
+                      <span>buyu&AI助手</span>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center gap-3">
+                    <button className="text-xs text-gray-600 hover:text-gray-800 transition-colors">
+                      Get help
+                    </button>
+                    {messages.length > 0 && (
+                      isLoading ? (
+                        <button
+                          onClick={() => setIsLoading(false)}
+                          className="text-xs text-gray-600 hover:text-gray-800 transition-colors"
+                        >
+                          Stop
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => setMessages([])}
+                          className="text-xs text-gray-600 hover:text-gray-800 transition-colors"
+                        >
+                          Clear
+                        </button>
+                      )
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </>
   );
-} 
+};
