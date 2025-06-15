@@ -108,6 +108,11 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     enablePageContext = true
   } = config;
   
+  // 获取位置样式的函数
+  const getPositionStyles = useCallback(() => {
+    return 'fixed bottom-6 right-6';
+  }, []);
+  
   // 豆包语音配置
   const doubaoVoiceConfig: DoubaoVoiceConfig = useMemo(() => ({
     apiAppId: '2139817228', // 使用固定的豆包API配置
@@ -893,6 +898,8 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     }
   }, [enableVoice, voiceSettings.autoPlay, generateSpeech, playAudio, getToolDisplayName]);
 
+
+
   // 发送消息
   const sendMessage = useCallback(async (content: string, isVoice = false) => {
     if (!content.trim() || isLoading) return;
@@ -1550,17 +1557,56 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     </div>
   );
 
-  return (
-    <>
-      {/* 悬浮按钮 */}
-      {!isOpen && (
+  // Anthropic 风格悬浮按钮 - 使用内联样式确保显示
+  if (!isOpen) {
+    return (
+      <div className={getPositionStyles()}>
         <button
           onClick={() => setIsOpen(true)}
-          className="fixed bottom-6 right-6 w-14 h-14 bg-white rounded-full shadow-lg hover:shadow-xl transition-all duration-200 flex items-center justify-center"
+          style={{
+            backgroundColor: '#000000',
+            color: '#ffffff',
+            padding: '12px 20px',
+            border: 'none',
+            borderRadius: '16px',
+            fontSize: '14px',
+            fontWeight: '500',
+            cursor: 'pointer',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+            transition: 'all 0.3s ease',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            transform: 'scale(1)',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = '#1f2937';
+            e.currentTarget.style.transform = 'scale(1.05)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = '#000000';
+            e.currentTarget.style.transform = 'scale(1)';
+          }}
+          aria-label="Ask AI"
         >
-          <MessageCircle size={24} className="text-gray-700" />
+          <Sparkles 
+            size={20} 
+            strokeWidth={2} 
+            style={{
+              animation: 'pulse 2s infinite',
+            }}
+          />
+          <span className="ask-ai-text">
+            Ask AI
+          </span>
         </button>
-      )}
+      </div>
+    );
+  }
+
+  return (
+    <>
 
       {/* 隐藏的音频元素 */}
       <audio ref={audioRef} />
@@ -1711,7 +1757,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
             {assistantMode === 'text' && (
               <div className="border-t border-gray-100 p-4">
                 {/* 输入框 */}
-                <div className="flex items-center gap-2 p-3 bg-gray-50 border border-gray-200 rounded-lg focus-within:border-gray-300">
+                <div className="flex items-center gap-2 p-3 bg-gray-50 border border-gray-200 rounded-lg focus-within:border-orange-300 focus-within:outline-none focus-within:ring-2 focus-within:ring-orange-500/20">
                   <input
                     ref={inputRef}
                     type="text"
@@ -1724,8 +1770,13 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                       }
                     }}
                     placeholder="How do I get started?"
-                    className="flex-1 bg-transparent outline-none text-sm text-gray-700 placeholder-gray-500"
+                    className="flex-1 bg-transparent border-none outline-none text-sm text-gray-700 placeholder-gray-500 focus:outline-none focus:border-none focus:ring-0"
                     disabled={isLoading || voiceState.isListening}
+                    style={{
+                      border: 'none',
+                      outline: 'none',
+                      boxShadow: 'none'
+                    }}
                   />
                   {enableVoice && (
                     <button 
