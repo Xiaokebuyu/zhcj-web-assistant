@@ -101,6 +101,9 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   
   // 语音通话管理器
   const voiceCallManager = useRef<VoiceCallManager | null>(null);
+  
+  // API请求控制器
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const {
     position = 'bottom-right',
@@ -311,6 +314,26 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
       setAssistantMode('text');
     }
   }, [assistantMode, startVoiceCall, endVoiceCall]);
+
+  // 中止当前请求
+  const abortCurrentRequest = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    
+    // 清理状态
+    setIsLoading(false);
+    setToolProgress({
+      isToolCalling: false,
+      progress: '',
+      step: 0,
+      totalSteps: 0
+    });
+    
+    // 移除"正在思考"或"正在处理"的消息
+    setMessages(prev => prev.filter(m => !m.isThinking));
+  }, []);
 
   // 直接提取当前页面上下文的函数
   const extractCurrentPageContext = useCallback(() => {
@@ -703,6 +726,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
 
   // 处理工具调用的函数
   const handleToolCalls = useCallback(async (toolCalls: ToolCall[], conversationHistory: ExtendedChatMessage[], hasOpenManusTools = false) => {
+    const signal = abortControllerRef.current?.signal;
     // 检查是否包含OpenManus工具
     const openManusTools = toolCalls.filter(tool => 
       tool.function.name.startsWith('openmanus_')
@@ -756,7 +780,8 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               tool_calls: [openManusTool]
-            })
+            }),
+            signal
           });
 
           if (!openManusResponse.ok) {
@@ -789,7 +814,8 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             tool_calls: regularTools
-          })
+          }),
+          signal
         });
 
         if (!toolResponse.ok) {
@@ -835,7 +861,8 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
               tool_call_id: result.tool_call_id
             }))
           ]
-        })
+        }),
+        signal
       });
 
       if (!finalResponse.ok) {
@@ -878,6 +905,12 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
       }
 
     } catch (error) {
+      // 如果请求被中止，静默处理
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.log('工具调用已被用户中止');
+        return;
+      }
+      
       console.error('工具调用失败:', error);
       
       // 移除"正在处理..."消息，显示错误信息
@@ -896,6 +929,15 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   // 发送消息
   const sendMessage = useCallback(async (content: string, isVoice = false) => {
     if (!content.trim() || isLoading) return;
+
+    // 如果有正在进行的请求，先中止它
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    // 创建新的AbortController
+    abortControllerRef.current = new AbortController();
+    const signal = abortControllerRef.current.signal;
 
     const userMessage: ExtendedChatMessage = {
       id: Date.now().toString(),
@@ -947,7 +989,8 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody)
+        body: JSON.stringify(requestBody),
+        signal
       });
 
       if (!response.ok) throw new Error('网络请求失败');
@@ -964,6 +1007,12 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
       }
 
     } catch (error) {
+      // 如果请求被中止，不显示错误消息
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.log('请求已被用户中止');
+        return;
+      }
+      
       console.error('发送消息失败:', error);
       const errorMessage: ExtendedChatMessage = {
         id: Date.now().toString(),
@@ -977,6 +1026,11 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
         onError(error instanceof Error ? error : new Error('发送消息失败'));
       }
     } finally {
+      // 清理AbortController引用
+      if (abortControllerRef.current && !signal.aborted) {
+        abortControllerRef.current = null;
+      }
+      
       setIsLoading(false);
       setToolProgress({
         isToolCalling: false,
@@ -1128,6 +1182,12 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
       // 清理转录超时
       if (transcriptTimeoutRef.current) {
         clearTimeout(transcriptTimeoutRef.current);
+      }
+      
+      // 清理API请求
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
       }
     };
   }, [enableVoice, handleSTTEvent, sttConfig]);
@@ -1717,7 +1777,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                     type="text"
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
-                    onKeyPress={(e) => {
+                    onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
                         sendMessage(inputValue);
@@ -1764,7 +1824,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                     {messages.length > 0 && (
                       isLoading ? (
                         <button
-                          onClick={() => setIsLoading(false)}
+                          onClick={abortCurrentRequest}
                           className="text-xs text-gray-600 hover:text-gray-800 transition-colors"
                         >
                           Stop
