@@ -76,3 +76,5 @@ stories/
 OPENMANUS_INTEGRATION.md
 
 test-openmanus-integration.js
+
+openmanus-venv/
