@@ -1,0 +1,141 @@
+*{
+    margin: 0;
+    padding: 0;
+}
+body{
+    background-color: #E0E0E0;
+}
+#app {
+    min-height: 100vh; /* 确保容器至少占满整个视口高度 */
+    display: flex;
+    flex-direction: column;
+    position: relative;
+}
+
+#app > nav {
+    width: 100%;
+    height: 70px;
+    background-color: #20b2aa;
+    position: fixed;
+    display: flex;
+    align-items: center;
+    z-index: 100;
+
+}
+
+nav > .left, nav > .right {
+    display: flex;
+    align-items: center; /* 子元素垂直居中 */
+}
+
+nav > .left {
+    width: 20%;
+    padding-left: 20px;
+}
+
+nav > .right {
+    width: 80%;
+    height: 100%;
+    justify-content: flex-end;
+    padding-right: 20px;
+}
+
+nav span {
+    width: 50px;
+    height: 50px;
+    margin-right: 10px;
+
+}
+nav .iconfont{
+    font-size: 30px;
+    line-height: 70px;
+    color: #ffca27;
+}
+
+nav a {
+    text-decoration: none;
+    display: inline-block;
+    color: white;
+    font-size: 20px;
+    font-weight: 700;
+    padding: 0 20px;
+    height: 100%;
+    line-height: 70px;
+    vertical-align: middle;
+}
+nav .right a:hover {
+    background-color: white;
+    color: #42b983;
+}
+
+.right i{
+    padding-right: 10px;
+    line-height: 70px;
+    font-size: 20px;
+    vertical-align: middle;
+}
+
+#app footer{
+    z-index: 100;
+    width: 100%;
+    height: 360px;
+    margin-top: auto; /* 将footer推到最底部 */
+    bottom: 0;
+    background: linear-gradient(135deg, #b0f3ef 0%, #20b2aa 100%);
+}
+
+
+footer {
+    background-color: #f8f9fa;
+    color: #E0E0E0;
+    padding: 40px 0 20px;
+    border-top: 1px solid #e0e0e0;
+    font-size: 16px;
+
+}
+
+.footer-container {
+    max-width: 1600px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 30px;
+    padding: 0 20px;
+}
+.footer-container>div{
+    width: 75%;
+    height: 100%;
+    color: white;
+    display: flex;
+    text-align: left;
+}
+.footer-logo {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.footer-logo h3 {
+    font-size: 20px;
+    font-weight: 600;
+    color: #ff8c42;
+    margin-bottom: 20px;
+}
+footer .copyright{
+    margin-top: 10px;
+}
+.footer-logo ul{
+    list-style: none;
+    color: white;
+}
+.footer-logo ul li{
+    margin-bottom: 20px;
+}
+.footer-logo ul li i{
+    margin-right: 10px;
+}
+.footer-logo ul li a{
+    text-decoration: none;
+    color: white;
+    display: inline-block;
+}
