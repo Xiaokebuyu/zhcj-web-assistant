@@ -1,13 +1,24 @@
 INFO:     Will watch for changes in these directories: ['/home/xiaobuyu/workplace/网页悬浮框助手/ai-assistant/openmanus-api-service']
 INFO:     Uvicorn running on http://127.0.0.1:8001 (Press CTRL+C to quit)
-INFO:     Started reloader process [14420] using WatchFiles
-2025-06-14 21:14:59,752 - browser_use.telemetry.service - INFO - Anonymized telemetry enabled. See https://docs.browser-use.com/development/telemetry for more information.
-INFO:     Started server process [14423]
+INFO:     Started reloader process [51312] using StatReload
+2025-06-20 14:36:02,639 - browser_use.telemetry.service - INFO - Anonymized telemetry enabled. See https://docs.browser-use.com/development/telemetry for more information.
+INFO:     Started server process [51315]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
-INFO:     127.0.0.1:47038 - "GET /api/health HTTP/1.1" 200 OK
-INFO:     Shutting down
-INFO:     Waiting for application shutdown.
-INFO:     Application shutdown complete.
-INFO:     Finished server process [14423]
-INFO:     Stopping reloader process [14420]
+INFO:     127.0.0.1:37336 - "GET /api/health HTTP/1.1" 200 OK
+2025-06-20 14:36:43,391 - main - INFO - 创建新任务: 8830d73d-8490-4823-b743-0c439265ce88 - 抓取知乎热榜（https://www.zhihu.com/hot）前十名的问题标题、热度值和链接
+INFO:     127.0.0.1:35340 - "POST /api/execute_task HTTP/1.1" 200 OK
+2025-06-20 14:36:43.681 | INFO     | main:get_or_create_manus_instance:105 - 为任务 8830d73d-8490-4823-b743-0c439265ce88 创建了新的Manus实例
+2025-06-20 14:36:43.681 | INFO     | main:execute_openmanus_task:124 - 开始执行任务 8830d73d-8490-4823-b743-0c439265ce88: 抓取知乎热榜（https://www.zhihu.com/hot）前十名的问题标题、热度值和链接
+2025-06-20 14:36:43.681 | INFO     | app.agent.base:run:140 - Executing step 1/20
+2025-06-20 14:37:41,792 - httpx - INFO - HTTP Request: POST https://ark.cn-beijing.volces.com/api/v3/chat/completions "HTTP/1.1 200 OK"
+2025-06-20 14:37:41.796 | INFO     | app.llm:update_token_count:243 - Token usage: Input=2079, Completion=1502, Cumulative Input=2079, Cumulative Completion=1502, Total=3581, Cumulative Total=3581
+2025-06-20 14:37:41.797 | INFO     | app.agent.toolcall:think:81 - ✨ Manus's thoughts: 
+
+2025-06-20 14:37:41.797 | INFO     | app.agent.toolcall:think:82 - 🛠️ Manus selected 1 tools to use
+2025-06-20 14:37:41.797 | INFO     | app.agent.toolcall:think:86 - 🧰 Tools being prepared: ['browser_use']
+2025-06-20 14:37:41.797 | INFO     | app.agent.toolcall:think:89 - 🔧 Tool arguments: {"action":"go_to_url","url":"https://www.zhihu.com/hot"}
+2025-06-20 14:37:41.798 | INFO     | app.agent.toolcall:execute_tool:180 - 🔧 Activating tool: 'browser_use'...
+2025-06-20 14:37:41.798 | INFO     | app.agent.toolcall:act:150 - 🎯 Tool 'browser_use' completed its mission! Result: Observed output of cmd `browser_use` executed:
+Error: Browser action 'go_to_url' failed: BaseModel.__init__() takes 1 positional argument but 2 were given
+2025-06-20 14:37:41.799 | INFO     | app.agent.base:run:140 - Executing step 2/20

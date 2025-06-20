@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { MessageCircle, X, Search, Send, Mic, Copy, ThumbsUp, ThumbsDown, ChevronRight, FileText, Volume2, VolumeX, Settings, Square, RefreshCw, Phone, Sparkles, Minus } from 'lucide-react';
-import { ChatMessage, AssistantConfig, VoiceState, VoiceSettings, STTConfig, StreamingSTTEvent, ToolCall, ToolProgress, PageContext, ContextStatus, ChatRequest, AssistantMode, VoiceCallState, DoubaoVoiceConfig } from '@/types';
+import { ReasoningChatMessage, AssistantConfig, VoiceState, VoiceSettings, STTConfig, StreamingSTTEvent, ToolCall, ToolProgress, PageContext, ContextStatus, ChatRequest, AssistantMode, VoiceCallState, DoubaoVoiceConfig, UnifiedChatResponse } from '@/types';
 
 // 本地类型定义
 interface SearchResult {
@@ -15,14 +15,12 @@ interface SearchResult {
   siteIcon?: string;
 }
 
-// 扩展 ChatMessage 接口
-interface ExtendedChatMessage extends ChatMessage {
-  searchSources?: SearchResult[];
-}
+// 已移动到统一类型定义中
 import { StreamingSpeechRecognition } from '@/utils/streamingSpeechRecognition';
 import { toolDefinitions } from '@/utils/toolManager';
 import { VoiceCallMode } from './VoiceCall/VoiceCallMode';
 import { VoiceCallManager } from '@/utils/voiceCallManager';
+import { UnifiedMessage } from './UnifiedMessage';
 
 interface FloatingAssistantProps {
   config?: AssistantConfig;
@@ -40,7 +38,7 @@ const VOICE_OPTIONS = [
 
 export default function FloatingAssistant({ config = {}, onError }: FloatingAssistantProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState<ExtendedChatMessage[]>([]);
+  const [messages, setMessages] = useState<ReasoningChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -672,243 +670,25 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   );
 }, []);
 
-  // 处理直接回复的函数
-  const handleDirectResponse = useCallback(async (data: { 
-    message: string; 
-    messageId: string;
-    contextUsed?: boolean;
-    pageInfo?: { title: string; url: string; type: string; };
-    searchSources?: SearchResult[];
-  }) => {
-    // 生成语音（如果启用）
-    let audioUrl: string | undefined = undefined;
-    if (enableVoice && voiceSettings.autoPlay) {
-      const generatedUrl = await generateSpeech(data.message);
-      audioUrl = generatedUrl || undefined;
-    }
+  // 思维链展开/收缩控制
+  const toggleReasoning = useCallback((messageId: string) => {
+    setMessages(prev => prev.map(msg => 
+      msg.id === messageId && (msg.messageType === 'reasoning' || msg.messageType === 'tool_execution')
+        ? { ...msg, isCollapsed: !msg.isCollapsed }
+        : msg
+    ));
+  }, []);
 
-    const assistantMessage: ExtendedChatMessage = {
-      id: data.messageId,
-      role: 'assistant',
-      content: data.message,
-      timestamp: new Date(),
-      audioUrl,
-      contextUsed: data.contextUsed,
-      pageInfo: data.pageInfo,
-      searchSources: data.searchSources
-    };
-
-    setMessages(prev => [...prev, assistantMessage]);
-
-    // 自动播放语音
-    if (audioUrl && voiceSettings.autoPlay) {
-      setTimeout(() => playAudio(audioUrl), 500);
-    }
-  }, [enableVoice, voiceSettings.autoPlay, generateSpeech, playAudio]);
-
-  // 处理工具调用的函数
-  const handleToolCalls = useCallback(async (toolCalls: ToolCall[], conversationHistory: ExtendedChatMessage[], hasOpenManusTools = false) => {
-    // 检查是否包含OpenManus工具
-    const openManusTools = toolCalls.filter(tool => 
-      tool.function.name.startsWith('openmanus_')
-    );
-    const regularTools = toolCalls.filter(tool => 
-      !tool.function.name.startsWith('openmanus_')
-    );
-
-    // 显示"正在处理..."消息
-    const thinkingMessage: ExtendedChatMessage = {
-      id: `thinking-${Date.now()}`,
-      role: 'assistant',
-      content: hasOpenManusTools ? 
-        '正在启动OpenManus智能代理为您处理复杂任务...' : 
-        '正在为您查询相关信息...',
-      timestamp: new Date(),
-      isThinking: true
-    };
-    setMessages(prev => [...prev, thinkingMessage]);
-
-    // 设置工具调用进度
-    const totalSteps = hasOpenManusTools ? 5 : 3; // OpenManus需要更多步骤
-    setToolProgress({
-      isToolCalling: true,
-      currentTool: getToolDisplayName(toolCalls[0].function.name),
-      progress: hasOpenManusTools ? 
-        '正在初始化OpenManus代理...' : 
-        '正在查询...',
-      step: 1,
-      totalSteps
-    });
-
-    try {
-      const allResults: Array<{
-        tool_call_id: string;
-        role: string;
-        content: string;
-      }> = [];
-
-      // 如果有OpenManus工具，单独处理
-      if (openManusTools.length > 0) {
-        setToolProgress(prev => ({
-          ...prev,
-          progress: '正在执行OpenManus任务...',
-          step: 2
-        }));
-
-        for (const openManusTool of openManusTools) {
-          const openManusResponse = await fetch('/api/tools', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              tool_calls: [openManusTool]
-            })
-          });
-
-          if (!openManusResponse.ok) {
-            throw new Error('OpenManus工具调用失败');
-          }
-
-          const openManusData = await openManusResponse.json();
-          if (openManusData.success && openManusData.results) {
-            allResults.push(...openManusData.results);
-          }
-        }
-
-        setToolProgress(prev => ({
-          ...prev,
-          progress: '正在处理OpenManus结果...',
-          step: 3
-        }));
-      }
-
-      // 处理常规工具
-      if (regularTools.length > 0) {
-        setToolProgress(prev => ({
-          ...prev,
-          progress: '正在执行常规工具...',
-          step: hasOpenManusTools ? 4 : 2
-        }));
-
-        const toolResponse = await fetch('/api/tools', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            tool_calls: regularTools
-          })
-        });
-
-        if (!toolResponse.ok) {
-          throw new Error('工具调用失败');
-        }
-
-        const toolData = await toolResponse.json();
-        
-        if (!toolData.success) {
-          throw new Error('工具执行失败');
-        }
-
-        if (toolData.results) {
-          allResults.push(...toolData.results);
-        }
-      }
-
-      // 更新进度
-      setToolProgress(prev => ({
-        ...prev,
-        progress: '正在分析结果...',
-        step: hasOpenManusTools ? 5 : 3
-      }));
-
-      // 第二步：将工具结果发送给AI进行整合
-      const finalResponse = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [
-            ...conversationHistory.map(m => ({
-              role: m.role,
-              content: m.content
-            })),
-            {
-              role: 'assistant',
-              content: '',
-              tool_calls: toolCalls
-            },
-            ...allResults.map(result => ({
-              role: result.role,
-              content: result.content,
-              tool_call_id: result.tool_call_id
-            }))
-          ]
-        })
-      });
-
-      if (!finalResponse.ok) {
-        throw new Error('最终回复生成失败');
-      }
-
-      const finalData = await finalResponse.json();
-
-      // 更新进度
-      setToolProgress(prev => ({
-        ...prev,
-        progress: '正在生成回复...',
-        step: 3
-      }));
-
-      // 生成语音（如果启用）
-      let audioUrl: string | undefined = undefined;
-      if (enableVoice && voiceSettings.autoPlay) {
-        const generatedUrl = await generateSpeech(finalData.message);
-        audioUrl = generatedUrl || undefined;
-      }
-
-      // 移除"正在处理..."消息，添加最终回复
-      setMessages(prev => {
-        const filtered = prev.filter(m => !m.isThinking);
-        return [...filtered, {
-          id: finalData.messageId,
-          role: 'assistant',
-          content: finalData.message,
-          timestamp: new Date(),
-          audioUrl,
-          toolCalls,
-          searchSources: finalData.searchSources // 添加搜索来源
-        }];
-      });
-
-      // 自动播放语音
-      if (audioUrl && voiceSettings.autoPlay) {
-        setTimeout(() => playAudio(audioUrl), 500);
-      }
-
-    } catch (error) {
-      console.error('工具调用失败:', error);
-      
-      // 移除"正在处理..."消息，显示错误信息
-      setMessages(prev => {
-        const filtered = prev.filter(m => !m.isThinking);
-        return [...filtered, {
-          id: Date.now().toString(),
-          role: 'assistant',
-          content: '抱歉，我在获取信息时遇到了问题。请稍后再试或换个方式提问。',
-          timestamp: new Date()
-        }];
-      });
-    }
-  }, [enableVoice, voiceSettings.autoPlay, generateSpeech, playAudio, getToolDisplayName]);
-
-
-
-  // 发送消息
+  // 完全重写的发送消息函数
   const sendMessage = useCallback(async (content: string, isVoice = false) => {
     if (!content.trim() || isLoading) return;
 
-    const userMessage: ExtendedChatMessage = {
+    const userMessage: ReasoningChatMessage = {
       id: Date.now().toString(),
       role: 'user',
       content: content.trim(),
       timestamp: new Date(),
+      messageType: 'user',
       isVoice
     };
 
@@ -917,82 +697,181 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     setIsLoading(true);
 
     try {
-      // 如果是页面相关问题但没有上下文，尝试获取
-      const isPageQuestion = isPageRelatedQuestion(content);
-      console.log('是否为页面相关问题:', isPageQuestion);
-      console.log('当前页面上下文:', pageContext);
-      
-      if (isPageQuestion && !pageContext && enablePageContext) {
-        console.log('页面相关问题但无上下文，请求更新...');
-        requestContextUpdate();
-        // 等待一下看是否能获取到上下文
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-
-      // 构建请求
-      const requestBody: ChatRequest = {
-        messages: [...messages, userMessage].map(m => ({
-          role: m.role,
-          content: m.content
-        })),
-        tools: toolDefinitions, // 包含工具定义
-        temperature: 0.7,
-        max_tokens: 2048,
-      };
-
-      // 如果有页面上下文，添加到请求中
-      if (pageContext && enablePageContext) {
-        console.log('添加页面上下文到请求:', pageContext.basic?.title);
-        requestBody.pageContext = pageContext;
-      } else {
-        console.log('无页面上下文或未启用页面上下文功能');
-      }
-
-      console.log('发送聊天请求:', requestBody);
-
-      // 第一步：发送用户消息，检查是否需要工具调用
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody)
+        body: JSON.stringify({
+          messages: [...messages, userMessage].map(m => ({
+            role: m.role,
+            content: m.content
+          })),
+          pageContext
+        })
       });
 
-      if (!response.ok) throw new Error('网络请求失败');
+      if (!response.ok) {
+        throw new Error('网络请求失败');
+      }
 
-      const data = await response.json();
-      
-      // 检查是否需要调用工具
-      if (data.requiresToolCalls && data.tool_calls && data.tool_calls.length > 0) {
-        // 显示工具调用进度
-        await handleToolCalls(data.tool_calls, [...messages, userMessage], data.hasOpenManusTools);
-      } else {
-        // 直接回复，无需工具
-        await handleDirectResponse(data);
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('无法读取响应');
+      }
+
+      let currentReasoningMessage: ReasoningChatMessage | null = null;
+      let currentToolMessage: ReasoningChatMessage | null = null;
+      let reasoningStartTime = Date.now();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = new TextDecoder().decode(value);
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+            if (data === '[DONE]') continue;
+
+            try {
+              const parsed: UnifiedChatResponse = JSON.parse(data);
+
+              if (parsed.type === 'reasoning') {
+                if (!currentReasoningMessage) {
+                  // 创建新的思维链消息
+                  currentReasoningMessage = {
+                    id: `reasoning-${parsed.messageId}`,
+                    role: 'assistant',
+                    content: '',
+                    timestamp: new Date(reasoningStartTime),
+                    messageType: 'reasoning',
+                    reasoningContent: parsed.full_reasoning || '',
+                    isReasoningComplete: false,
+                    isCollapsed: false
+                  };
+                  setMessages(prev => [...prev, currentReasoningMessage!]);
+                } else {
+                  // 更新思维链内容
+                  setMessages(prev => prev.map(msg => 
+                    msg.id === currentReasoningMessage!.id 
+                      ? { ...msg, reasoningContent: parsed.full_reasoning || '' }
+                      : msg
+                  ));
+                }
+
+              } else if (parsed.type === 'tool_decision') {
+                // 完成思维链，开始工具执行
+                if (currentReasoningMessage) {
+                  const duration = Math.round((Date.now() - reasoningStartTime) / 1000);
+                  setMessages(prev => prev.map(msg => 
+                    msg.id === currentReasoningMessage!.id 
+                      ? { 
+                          ...msg, 
+                          isReasoningComplete: true, 
+                          reasoningDuration: duration,
+                          isCollapsed: true 
+                        }
+                      : msg
+                  ));
+                }
+
+                // 创建工具执行消息
+                currentToolMessage = {
+                  id: `tool-${parsed.messageId}`,
+                  role: 'assistant',
+                  content: '',
+                  timestamp: new Date(),
+                  messageType: 'tool_execution',
+                  toolExecution: {
+                    id: `exec-${parsed.messageId}`,
+                    toolCalls: parsed.tool_calls || [],
+                    results: [],
+                    status: 'executing',
+                    startTime: new Date()
+                  }
+                };
+                setMessages(prev => [...prev, currentToolMessage!]);
+
+              } else if (parsed.type === 'tool_result') {
+                // 更新工具执行结果
+                if (currentToolMessage) {
+                  setMessages(prev => prev.map(msg => 
+                    msg.id === currentToolMessage!.id && msg.toolExecution
+                      ? { 
+                          ...msg, 
+                          toolExecution: {
+                            ...msg.toolExecution,
+                            results: [...msg.toolExecution.results, parsed]
+                          }
+                        }
+                      : msg
+                  ));
+                }
+
+              } else if (parsed.type === 'done') {
+                // 完成所有处理
+                if (currentToolMessage) {
+                  setMessages(prev => prev.map(msg => 
+                    msg.id === currentToolMessage!.id && msg.toolExecution
+                      ? { 
+                          ...msg, 
+                          toolExecution: {
+                            ...msg.toolExecution,
+                            status: 'completed',
+                            endTime: new Date(),
+                            postExecutionReasoning: parsed.post_tool_reasoning
+                          }
+                        }
+                      : msg
+                  ));
+                }
+
+                // 添加最终回复消息
+                if (parsed.final_content) {
+                  let audioUrl: string | undefined = undefined;
+                  if (enableVoice && voiceSettings.autoPlay) {
+                    const generatedUrl = await generateSpeech(parsed.final_content);
+                    audioUrl = generatedUrl || undefined;
+                  }
+
+                  const finalMessage: ReasoningChatMessage = {
+                    id: `final-${parsed.messageId}`,
+                    role: 'assistant',
+                    content: parsed.final_content,
+                    timestamp: new Date(),
+                    messageType: 'assistant_final',
+                    audioUrl
+                  };
+
+                  setMessages(prev => [...prev, finalMessage]);
+
+                  // 自动播放语音
+                  if (audioUrl && voiceSettings.autoPlay) {
+                    setTimeout(() => playAudio(audioUrl), 500);
+                  }
+                }
+              }
+            } catch (e) {
+              console.error('解析响应错误:', e);
+            }
+          }
+        }
       }
 
     } catch (error) {
       console.error('发送消息失败:', error);
-      const errorMessage: ExtendedChatMessage = {
+      setMessages(prev => [...prev, {
         id: Date.now().toString(),
         role: 'assistant',
-        content: '抱歉，我现在无法回应。请稍后再试。',
-        timestamp: new Date()
-      };
-      setMessages(prev => [...prev, errorMessage]);
-      
-      if (onError) {
-        onError(error instanceof Error ? error : new Error('发送消息失败'));
-      }
+        content: '抱歉，我遇到了一些问题。请稍后再试。',
+        timestamp: new Date(),
+        messageType: 'assistant_final'
+      }]);
     } finally {
       setIsLoading(false);
-      setToolProgress({
-        isToolCalling: false,
-        progress: '',
-        step: 0,
-        totalSteps: 0
-      });
     }
-  }, [isLoading, messages, onError, handleToolCalls, handleDirectResponse, isPageRelatedQuestion, pageContext, enablePageContext, requestContextUpdate]);
+  }, [messages, pageContext, isLoading, enableVoice, voiceSettings.autoPlay, generateSpeech, playAudio]);
 
   // 处理STT事件
   const handleSTTEvent = useCallback((event: StreamingSTTEvent) => {
@@ -1183,8 +1062,6 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     sendMessage(inputValue);
   };
 
-
-
   // 渲染页面上下文状态指示器
   const renderContextStatus = () => {
     if (!enablePageContext) return null;
@@ -1367,157 +1244,47 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
       {renderTranscriptDisplay()}
 
       <div className="space-y-4">
-        {messages.map((message) => (
-          <div key={message.id}>
-            {/* 消息 */}
-            <div className="flex gap-3">
-              {/* 头像 */}
-              <div className="w-8 h-8 bg-black rounded-full flex items-center justify-center flex-shrink-0">
-                {message.role === 'user' ? (
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="white">
-                    <path d="M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM12.735 14c.618 0 1.093-.561.872-1.139a6.002 6.002 0 0 0-11.215 0c-.22.578.254 1.139.872 1.139h9.47z"/>
-                  </svg>
-                ) : (
-                  <span className="text-white text-xs font-bold">AI</span>
-                )}
-              </div>
-              
-              {/* 内容 */}
-              <div className="flex-1">
-                <p className={`text-gray-900 ${message.isThinking ? 'text-gray-500 italic' : ''}`}>
-                  {message.content}
-                  {message.isThinking && <span className="ml-1 animate-pulse">...</span>}
-                </p>
-                
-                {message.isVoice && (
-                  <span className="ml-2 inline-flex items-center">
-                    <Mic size={12} className="opacity-75" />
-                  </span>
-                )}
-                {message.toolCalls && (
-                  <span className="ml-2 inline-flex items-center text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">
-                    使用了工具
-                  </span>
-                )}
-
-                {/* 工具调用进度显示 */}
-                {message.isThinking && toolProgress.isToolCalling && (
-                  <div className="mt-3 p-3 bg-blue-100 rounded-lg">
-                    <div className="flex items-center gap-2 text-sm text-blue-700 mb-2">
-                      <div className="animate-spin rounded-full h-3 w-3 border-2 border-blue-500 border-t-transparent"></div>
-                      <span>{toolProgress.currentTool}</span>
-                    </div>
-                    <div className="text-xs text-blue-600 mb-2">{toolProgress.progress}</div>
-                    <div className="w-full bg-blue-200 rounded-full h-1.5">
-                      <div 
-                        className="bg-blue-500 h-1.5 rounded-full transition-all duration-300" 
-                        style={{ width: `${(toolProgress.step / toolProgress.totalSteps) * 100}%` }}
-                      ></div>
-                    </div>
-                  </div>
-                )}
-                
-                {/* 显示页面上下文使用状态 */}
-                {message.contextUsed && message.pageInfo && (
-                  <div className="mt-3 pt-2 border-t border-green-200">
-                    <div className="text-xs text-green-700 flex items-center gap-1">
-                      <FileText size={12} />
-                      <span>基于页面&ldquo;{message.pageInfo.title}&rdquo;的内容回答</span>
-                    </div>
-                  </div>
-                )}
-
-                {/* 显示搜索来源 */}
-                {message.searchSources && message.searchSources.length > 0 && (
-                  <div className="mt-4">
-                    <p className="text-sm text-gray-600 mb-2">信息来源</p>
-                    <div className="space-y-2">
-                      {message.searchSources.slice(0, 3).map((source, idx) => (
-                        <a
-                          key={idx}
-                          href={source.url}
-                          className="flex items-center gap-3 p-3 bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors group"
-                        >
-                          <FileText size={16} className="text-gray-400 flex-shrink-0" />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm text-gray-900 group-hover:text-blue-600">{source.name}</p>
-                            <p className="text-xs text-gray-500">
-                              {source.siteName}
-                            </p>
-                          </div>
-                        </a>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                
-                {/* 语音播放按钮（仅助手消息） */}
-                {message.role === 'assistant' && !message.isThinking && enableVoice && (
-                  <div className="flex items-center space-x-2 mt-2 pt-2 border-t border-gray-200">
-                    {message.audioUrl ? (
-                      <button
-                        onClick={() => playAudio(message.audioUrl!)}
-                        className="flex items-center space-x-1 text-xs text-gray-600 hover:text-orange-500 transition-colors"
-                      >
-                        <Volume2 size={12} />
-                        <span>播放</span>
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => regenerateSpeech(message.id, message.content)}
-                        className="flex items-center space-x-1 text-xs text-gray-600 hover:text-orange-500 transition-colors"
-                      >
-                        <VolumeX size={12} />
-                        <span>生成语音</span>
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
+        {messages.length === 0 ? (
+          <div className="text-center py-8">
+            <div className="w-16 h-16 bg-gradient-to-r from-orange-100 to-amber-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+              <MessageCircle size={24} className="text-orange-500" strokeWidth={2} />
             </div>
-            
-            {/* 操作按钮 */}
-            {message.role === 'assistant' && !message.isThinking && (
-              <div className="flex items-center gap-1 mt-2 ml-11">
-                <button 
-                  onClick={() => {
-                    navigator.clipboard.writeText(message.content);
-                  }}
-                  className="p-1.5 hover:bg-gray-100 rounded transition-colors"
-                  title="复制"
-                >
-                  <Copy size={14} className="text-gray-400" />
-                </button>
-                <button 
-                  className="p-1.5 hover:bg-gray-100 rounded transition-colors"
-                  title="点赞"
-                >
-                  <ThumbsUp size={14} className="text-gray-400" />
-                </button>
-                <button 
-                  className="p-1.5 hover:bg-gray-100 rounded transition-colors"
-                  title="点踩"
-                >
-                  <ThumbsDown size={14} className="text-gray-400" />
-                </button>
-              </div>
-            )}
+            <p className="text-gray-600 text-sm leading-relaxed">
+              你好！我是你的 AI 助手<br />
+              {pageContext ? '我可以帮你分析当前页面内容，或回答其他问题' : '有什么可以帮助你的吗？'}
+            </p>
           </div>
-        ))}
-
+        ) : (
+          messages.map((message) => (
+            <UnifiedMessage
+              key={message.id}
+              message={message}
+              onToggleReasoning={() => toggleReasoning(message.id)}
+              onPlayAudio={playAudio}
+            />
+          ))
+        )}
+        
         {isLoading && (
-          <div className="flex gap-3">
-            <div className="w-8 h-8 bg-black rounded-full flex items-center justify-center">
-              <span className="text-white text-xs font-bold">AI</span>
-            </div>
-            <div className="flex-1">
-              <p className="text-gray-500 italic">
-                正在思考<span className="ml-1 animate-pulse">...</span>
-              </p>
+          <div className="flex justify-start animate-in fade-in duration-300">
+            <div className="flex gap-3">
+              <div className="w-8 h-8 bg-black rounded-full flex items-center justify-center">
+                <span className="text-white text-xs font-bold">AI</span>
+              </div>
+              <div className="bg-white border border-gray-100 px-4 py-3 rounded-2xl rounded-bl-md text-sm text-gray-600 shadow-sm">
+                <div className="flex items-center gap-1">
+                  正在思考
+                  <div className="flex gap-1">
+                    <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0ms'}}></div>
+                    <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '150ms'}}></div>
+                    <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '300ms'}}></div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         )}
-
+        
         <div ref={messagesEndRef} />
       </div>
     </div>
@@ -1607,7 +1374,6 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
 
   return (
     <>
-
       {/* 隐藏的音频元素 */}
       <audio ref={audioRef} />
 

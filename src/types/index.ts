@@ -14,6 +14,36 @@ export interface ToolResult {
   content: string;
 }
 
+// 新的工具执行数据类型
+export interface ToolExecutionData {
+  id: string;
+  toolCalls: ToolCall[];
+  results: (ToolResult | UnifiedChatResponse)[];
+  status: 'executing' | 'completed' | 'error';
+  startTime: Date;
+  endTime?: Date;
+  postExecutionReasoning?: string; // 工具执行后的思考
+}
+
+// 统一的聊天响应类型
+export interface UnifiedChatResponse {
+  type: 'reasoning' | 'tool_decision' | 'tool_execution' | 'tool_result' | 'final_content' | 'done' | 'error';
+  content?: string;
+  reasoning_content?: string;
+  tool_calls?: ToolCall[];
+  tool_results?: ToolResult[];
+  final_content?: string;
+  error?: string;
+  messageId?: string;
+  tool_call_id?: string;
+  tool_name?: string;
+  result?: unknown;
+  full_reasoning?: string;
+  full_content?: string;
+  phase?: string;
+  post_tool_reasoning?: string;
+}
+
 export interface ToolProgress {
   isToolCalling: boolean;
   currentTool?: string;
@@ -437,4 +467,28 @@ export interface DoubaoWebSocketMessage {
   data?: ArrayBuffer | string;
   error?: string;
   timestamp: number;
+}
+
+// 新的统一消息类型 - 替换现有的ChatMessage
+export interface ReasoningChatMessage extends ChatMessage {
+  // 消息类型：user | reasoning | tool_execution | assistant_final  
+  messageType: 'user' | 'reasoning' | 'tool_execution' | 'assistant_final';
+  
+  // 思维链内容
+  reasoningContent?: string;
+  isReasoningComplete?: boolean;
+  reasoningDuration?: number;
+  
+  // 工具执行相关
+  toolExecution?: ToolExecutionData;
+  
+  // 容器状态
+  isCollapsed?: boolean;
+  
+  // 语音和其他现有功能
+  isVoice?: boolean;
+  audioUrl?: string;
+  searchSources?: SearchResult[];
+  contextUsed?: boolean;
+  pageInfo?: { title: string; url: string; type: string; };
 } 

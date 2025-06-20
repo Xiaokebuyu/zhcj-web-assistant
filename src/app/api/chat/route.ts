@@ -1,7 +1,9 @@
 // src/app/api/chat/route.ts
 // 集成了OpenManus AI代理功能的聊天API
-import { NextRequest, NextResponse } from 'next/server';
-import { PageContext } from '../../../types';
+import { NextRequest } from 'next/server';
+import { ChatRequest, PageContext } from '@/types';
+
+// 删除重复的PageContextProcessor类定义，使用下面已有的更完整版本
 
 interface SearchResult {
   name: string;
@@ -28,21 +30,10 @@ interface ToolDefinition {
   };
 }
 
-// 扩展的聊天请求接口
-interface ChatRequest {
-  messages: ChatMessage[];
-  model?: string;
-  temperature?: number;
-  max_tokens?: number;
-  tools?: ToolDefinition[];
-  // 页面上下文
-  pageContext?: PageContext;
-}
-
 // 页面上下文处理器
 class PageContextProcessor {
   // 生成页面上下文的系统消息
-  static generateContextSystemMessage(pageContext: ChatRequest['pageContext']): string {
+  static generateContextSystemMessage(pageContext: PageContext): string {
     if (!pageContext) return '';
 
     const { basic, metadata, structure, extracted } = pageContext;
@@ -133,7 +124,7 @@ class PageContextProcessor {
   }
 
   // 增强用户消息（为页面相关问题添加上下文提示）
-  static enhanceUserMessage(userMessage: string, pageContext: ChatRequest['pageContext']): string {
+  static enhanceUserMessage(userMessage: string, pageContext: PageContext): string {
     if (!pageContext || !this.isPageRelatedQuestion(userMessage)) {
       return userMessage;
     }
@@ -201,56 +192,23 @@ export async function POST(request: NextRequest) {
       messages, 
       model = 'deepseek-reasoner', 
       temperature = 0.7, 
-      max_tokens = 1000,
-      tools,
+      max_tokens = 2000,
       pageContext
     }: ChatRequest = await request.json();
 
-    console.log('API收到的请求数据:');
-    console.log('- messages长度:', messages?.length);
-    console.log('- 是否有pageContext:', !!pageContext);
-    if (pageContext) {
-      console.log('- 页面标题:', pageContext.basic?.title);
-      console.log('- 页面URL:', pageContext.basic?.url);
-      console.log('- 页面类型:', pageContext.basic?.type);
-    }
-
-    // 验证请求数据
-    if (!messages || !Array.isArray(messages) || messages.length === 0) {
-      return NextResponse.json(
-        { error: '无效的消息格式' },
-        { status: 400 }
-      );
-    }
-
-    // 检查 API 密钥
     if (!process.env.DEEPSEEK_API_KEY) {
-      console.error('DeepSeek API 密钥未配置');
-      return NextResponse.json({
-        message: '抱歉，AI 服务配置有误。我们正在为您生成一个模拟回复。',
-        messageId: Date.now().toString(),
-        error: 'API密钥未配置',
-        isSimulated: true
-      });
+      return new Response('API密钥未配置', { status: 500 });
     }
 
-    // 获取用户最后一条消息
-    const lastUserMessage = messages[messages.length - 1];
-    const userContent = lastUserMessage?.content || '';
-
-    // 处理消息数组
+    // 处理页面上下文
     const processedMessages = [...messages];
-    
-    // 如果有页面上下文，处理最后一条用户消息
     if (pageContext && messages.length > 0) {
       const lastMessage = messages[messages.length - 1];
       if (lastMessage.role === 'user') {
-        // 增强用户消息
         const enhancedContent = PageContextProcessor.enhanceUserMessage(
           lastMessage.content, 
           pageContext
         );
-        
         processedMessages[processedMessages.length - 1] = {
           ...lastMessage,
           content: enhancedContent
@@ -258,232 +216,733 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 构建系统消息
-    let systemContent = `你是一个有用的AI助手。请用简洁、友好的方式回答用户的问题。
-
-当用户询问天气相关信息时，你可以使用 get_weather 工具来获取准确的天气数据。
-
-如果用户询问天气，请调用相应的工具获取最新信息，然后用自然语言为用户总结和解释结果。
-当用户询问最新信息、新闻、实时数据、当前事件、股价、汇率等需要最新数据的问题时，请使用 web_search 工具获取准确的实时信息。
-
-对于复杂任务，你还可以使用OpenManus工具：
-- 网页自动化和数据抓取：使用 openmanus_web_automation
-- Python代码执行和数据分析：使用 openmanus_code_execution  
-- 文件操作和处理：使用 openmanus_file_operations
-- 复杂的多步骤任务：使用 openmanus_general_task
-
-使用OpenManus工具的典型场景：
-- 抓取网页数据或内容
-- 自动化网页操作
-- 执行复杂的数据分析
-- 文件格式转换和处理
-- 需要多个步骤的综合任务
-- 编程和算法实现
-
-使用搜索的典型场景：
-- 最新新闻和时事
-- 股价、汇率、加密货币价格
-- 最新的产品发布信息
-- 实时统计数据
-- 你不确定或需要验证的信息
-
-请根据任务的复杂度和类型选择合适的工具，并根据结果为用户提供准确、及时的信息。`;
-
-    // 如果有页面上下文且用户询问页面相关问题，添加上下文信息
-    if (pageContext) {
-      const lastProcessedMessage = processedMessages[processedMessages.length - 1];
-      if (lastProcessedMessage?.role === 'user' && 
-          PageContextProcessor.isPageRelatedQuestion(lastProcessedMessage.content)) {
-        
-        systemContent += '\n\n' + PageContextProcessor.generateContextSystemMessage(pageContext);
-      }
-    }
-
-    const systemMessage: ChatMessage = {
+    // 系统消息 - 包含工具使用指导
+    const systemMessage = {
       role: 'system',
-      content: systemContent
+      content: `你是一个有用的AI助手。你可以使用以下工具来帮助用户：
+
+可用工具：
+- get_weather: 查询天气信息
+- web_search: 搜索最新信息
+- openmanus_web_automation: 网页自动化
+- openmanus_code_execution: 代码执行
+- openmanus_file_operations: 文件操作
+- openmanus_general_task: 通用任务处理
+
+请根据用户的问题判断是否需要使用工具，并在你的推理过程中说明你的决策。如果需要使用工具，请调用相应的工具函数。
+
+${pageContext ? '\n\n' + PageContextProcessor.generateContextSystemMessage(pageContext) : ''}`
     };
 
-    // 构建请求体
-    const requestBody: {
-      model: string;
-      messages: ChatMessage[];
-      temperature: number;
-      max_tokens: number;
-      stream: boolean;
-      tools?: ToolDefinition[];
-    } = {
+    // 创建流式响应
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(controller) {
+        let currentStage = 'reasoning'; // reasoning -> tool_execution -> final
+        let messageId = `msg_${Date.now()}`;
+        let reasoningContent = '';
+        let finalContent = '';
+        let toolCalls: any[] = [];
+        let toolResults: any[] = [];
+
+        try {
+          // 第一阶段：获取推理和可能的工具调用
+          const initialResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+            },
+            body: JSON.stringify({
       model,
       messages: [systemMessage, ...processedMessages],
       temperature,
       max_tokens,
-      stream: false
-    };
+              stream: true,
+              tools: [
+                {
+                  type: "function",
+                  function: {
+                    name: "get_weather",
+                    description: "获取指定城市的天气信息",
+                    parameters: {
+                      type: "object",
+                      properties: {
+                        location: { type: "string", description: "城市名称" },
+                        adm: { type: "string", description: "行政区域" }
+                      },
+                      required: ["location"]
+                    }
+                  }
+                },
+                {
+                  type: "function", 
+                  function: {
+                    name: "web_search",
+                    description: "搜索最新信息",
+                    parameters: {
+                      type: "object",
+                      properties: {
+                        query: { type: "string", description: "搜索关键词" }
+                      },
+                      required: ["query"]
+                    }
+                  }
+                }
+                // 可以添加更多工具定义
+              ]
+            }),
+          });
 
-    // 如果提供了工具定义，添加到请求中
-    if (tools && tools.length > 0) {
-      requestBody.tools = tools;
+          if (!initialResponse.ok) {
+            throw new Error(`API 错误: ${initialResponse.status}`);
+          }
+
+          const reader = initialResponse.body?.getReader();
+          if (!reader) {
+            throw new Error('无法读取响应流');
+          }
+
+          let buffer = '';
+
+          // 处理初始流式响应
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += new TextDecoder().decode(value);
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                const data = line.slice(6);
+                if (data === '[DONE]') {
+                  // 第一阶段完成
+                  if (toolCalls.length > 0) {
+                    // 有工具调用，进入工具执行阶段
+                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                      type: 'tool_decision',
+                      reasoning_content: reasoningContent,
+                      tool_calls: toolCalls,
+                      messageId
+                    })}\n\n`));
+                    
+                    currentStage = 'tool_execution';
+                  } else {
+                    // 无工具调用，直接完成
+                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                      type: 'done',
+                      reasoning_content: reasoningContent,
+                      final_content: finalContent,
+                      messageId
+                    })}\n\n`));
+                    controller.close();
+                    return;
+                  }
+                  break;
     }
 
     try {
-      // 调用DeepSeek API（带超时控制）
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15秒超时
+                  const parsed = JSON.parse(data);
+                  const delta = parsed.choices?.[0]?.delta;
 
-      const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+                  if (delta?.reasoning_content) {
+                    reasoningContent += delta.reasoning_content;
+                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                      type: 'reasoning',
+                      content: delta.reasoning_content,
+                      full_reasoning: reasoningContent,
+                      messageId
+                    })}\n\n`));
+                  } else if (delta?.content) {
+                    finalContent += delta.content;
+                  } else if (delta?.tool_calls) {
+                    // 收集工具调用 - 处理流式分片数据
+                    delta.tool_calls.forEach((toolCall: any) => {
+                      // DeepSeek可能发送不完整的分片，我们需要更灵活的处理
+                      if (!toolCall) return;
+                      
+                      // 如果有index，说明是分片数据
+                      if (typeof toolCall.index === 'number') {
+                        const index = toolCall.index;
+                        
+                        // 确保工具调用数组有足够的位置
+                        while (toolCalls.length <= index) {
+                          toolCalls.push({
+                            id: `temp_${index}`,
+                            type: 'function',
+                            function: { name: '', arguments: '' }
+                          });
+                        }
+                        
+                        // 更新分片数据
+                        if (toolCall.id) {
+                          toolCalls[index].id = toolCall.id;
+                        }
+                        if (toolCall.type) {
+                          toolCalls[index].type = toolCall.type;
+                        }
+                        if (toolCall.function?.name) {
+                          toolCalls[index].function.name = toolCall.function.name;
+                        }
+                        if (toolCall.function?.arguments) {
+                          toolCalls[index].function.arguments += toolCall.function.arguments;
+                        }
+                      } else {
+                        // 处理完整的工具调用（旧逻辑保留）
+                        if (!toolCall.id || !toolCall.function?.name) {
+                          console.warn('忽略格式不正确的工具调用:', toolCall);
+                          return;
+                        }
+                        
+                        const existingIndex = toolCalls.findIndex(tc => tc.id === toolCall.id);
+                        if (existingIndex >= 0) {
+                          // 更新现有工具调用
+                          if (toolCall.function?.arguments) {
+                            toolCalls[existingIndex].function.arguments += toolCall.function.arguments;
+                          }
+                        } else {
+                          // 新的工具调用
+                          toolCalls.push({
+                            id: toolCall.id,
+                            type: toolCall.type || 'function',
+                            function: {
+                              name: toolCall.function.name,
+                              arguments: toolCall.function.arguments || ''
+                            }
+                          });
+                        }
+                      }
+                    });
+                  }
+                } catch (e) {
+                  console.error('解析流式数据错误:', e);
+                }
+              }
+            }
+          }
+
+          // 如果有工具调用，执行工具
+          if (currentStage === 'tool_execution' && toolCalls.length > 0) {
+            // 过滤并验证工具调用
+            const validToolCalls = toolCalls.filter(toolCall => {
+              // 检查基本结构
+              if (!toolCall?.function?.name) {
+                console.warn('过滤掉无效的工具调用（缺少名称）:', toolCall);
+                return false;
+              }
+              
+              // 检查是否有有效的ID
+              if (!toolCall.id || toolCall.id.startsWith('temp_')) {
+                console.warn('过滤掉无效的工具调用（临时ID）:', toolCall);
+                return false;
+              }
+              
+              return true;
+            });
+
+            if (validToolCalls.length === 0) {
+              console.warn('没有有效的工具调用，跳过工具执行阶段');
+              // 直接完成，无工具调用
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                type: 'done',
+                reasoning_content: reasoningContent,
+                final_content: finalContent,
+                messageId
+              })}\n\n`));
+              controller.close();
+              return;
+            }
+
+            console.log('有效的工具调用:', validToolCalls);
+
+            // 发送工具执行开始信号
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+              type: 'tool_execution',
+              tool_calls: validToolCalls,
+              messageId
+            })}\n\n`));
+
+            // 执行所有工具调用
+            const toolExecutionResults = [];
+            for (const toolCall of validToolCalls) {
+              try {
+                // 验证工具调用完整性
+                if (!toolCall?.function?.name) {
+                  console.error('工具调用缺少必要信息:', toolCall);
+                  continue;
+                }
+                
+                console.log(`执行工具: ${toolCall.function.name}`, toolCall);
+                const toolResult = await executeToolCall(toolCall);
+                
+                toolExecutionResults.push({
+                  tool_call_id: toolCall.id,
+                  role: 'tool',
+                  content: JSON.stringify(toolResult)
+                });
+                
+                // 发送工具结果
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                  type: 'tool_result',
+                  tool_call_id: toolCall.id,
+                  tool_name: toolCall.function.name,
+                  result: toolResult,
+                  messageId
+                })}\n\n`));
+                
+              } catch (error) {
+                console.error(`工具执行失败: ${toolCall?.function?.name || 'unknown'}`, error);
+                
+                // 确保有有效的工具调用ID
+                const callId = toolCall?.id || `error_${Date.now()}`;
+                
+                toolExecutionResults.push({
+                  tool_call_id: callId,
+                  role: 'tool',
+                  content: JSON.stringify({
+                    error: error instanceof Error ? error.message : '工具执行失败',
+                    success: false,
+                    tool_name: toolCall?.function?.name || 'unknown'
+                  })
+                });
+                
+                // 发送错误结果
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                  type: 'tool_result',
+                  tool_call_id: callId,
+                  tool_name: toolCall?.function?.name || 'unknown',
+                  result: {
+                    error: error instanceof Error ? error.message : '工具执行失败',
+                    success: false
+                  },
+                  messageId
+                })}\n\n`));
+              }
+            }
+
+            // 第二阶段：工具结果整合和最终回复
+            const finalResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
         },
-        body: JSON.stringify(requestBody),
-        signal: controller.signal,
-      });
+              body: JSON.stringify({
+                model,
+                messages: [
+                  systemMessage,
+                  ...processedMessages,
+                  {
+                    role: 'assistant',
+                    content: finalContent,
+                    tool_calls: toolCalls
+                  },
+                  ...toolExecutionResults
+                ],
+                temperature,
+                max_tokens,
+                stream: true
+              }),
+            });
 
-      clearTimeout(timeoutId);
+            if (!finalResponse.ok) {
+              throw new Error(`最终响应API错误: ${finalResponse.status}`);
+            }
 
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => '无法获取错误信息');
-        console.error('DeepSeek API 错误:', response.status, response.statusText, errorText);
-        
-        // 返回智能模拟回复
-        return generateFallbackResponse(userContent);
-      }
+            const finalReader = finalResponse.body?.getReader();
+            if (!finalReader) {
+              throw new Error('无法读取最终响应流');
+            }
 
-      const data = await response.json();
-      
-      // 检查API响应格式
-      if (!data.choices || data.choices.length === 0) {
-        console.error('AI服务返回了无效的响应格式:', data);
-        return generateFallbackResponse(userContent);
-      }
+            let finalBuffer = '';
+            let postToolReasoning = '';
+            let finalFinalContent = '';
 
-      const choice = data.choices[0];
-      const message = choice.message;
+            while (true) {
+              const { done, value } = await finalReader.read();
+              if (done) break;
 
-      // 检查是否需要调用工具
-      if (message.tool_calls && message.tool_calls.length > 0) {
-        // 即使需要工具调用，也检查是否已有搜索结果
-        let searchSources: SearchResult[] = [];
-        if (ToolResultProcessor.containsToolResults(processedMessages)) {
-          searchSources = ToolResultProcessor.extractSearchSources(processedMessages);
+              finalBuffer += new TextDecoder().decode(value);
+              const lines = finalBuffer.split('\n');
+              finalBuffer = lines.pop() || '';
+
+              for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                  const data = line.slice(6);
+                  if (data === '[DONE]') {
+                    // 全部完成
+                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                      type: 'done',
+                      reasoning_content: reasoningContent,
+                      post_tool_reasoning: postToolReasoning,
+                      final_content: finalFinalContent,
+                      tool_calls: toolCalls,
+                      tool_results: toolExecutionResults,
+                      messageId
+                    })}\n\n`));
+                    controller.close();
+                    return;
+                  }
+
+                  try {
+                    const parsed = JSON.parse(data);
+                    const delta = parsed.choices?.[0]?.delta;
+
+                    if (delta?.reasoning_content) {
+                      postToolReasoning += delta.reasoning_content;
+                      controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                        type: 'reasoning',
+                        content: delta.reasoning_content,
+                        full_reasoning: postToolReasoning,
+                        phase: 'post_tool',
+                        messageId
+                      })}\n\n`));
+                    } else if (delta?.content) {
+                      finalFinalContent += delta.content;
+                      controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                        type: 'final_content',
+                        content: delta.content,
+                        full_content: finalFinalContent,
+                        messageId
+                      })}\n\n`));
+                    }
+                  } catch (e) {
+                    console.error('解析最终响应错误:', e);
+                  }
+                }
+              }
+            }
+          }
+
+        } catch (error) {
+          console.error('流式处理错误:', error);
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+            type: 'error',
+            error: error instanceof Error ? error.message : '未知错误',
+            messageId
+          })}\n\n`));
+        } finally {
+          controller.close();
         }
-
-        // 检查是否包含OpenManus工具调用
-        const hasOpenManusTools = message.tool_calls.some((toolCall: { function: { name: string } }) => 
-          toolCall.function.name.startsWith('openmanus_')
-        );
-
-        return NextResponse.json({
-          message: message.content || '',
-          messageId: data.id || Date.now().toString(),
-          tool_calls: message.tool_calls,
-          usage: data.usage,
-          requiresToolCalls: true,
-          hasOpenManusTools, // 标记是否包含OpenManus工具
-          searchSources: searchSources.length > 0 ? searchSources : undefined,
-          // 添加上下文使用标记
-          contextUsed: pageContext ? PageContextProcessor.isPageRelatedQuestion(
-            processedMessages[processedMessages.length - 1]?.content || ''
-          ) : false,
-          pageInfo: pageContext ? {
-            title: pageContext.basic.title,
-            url: pageContext.basic.url,
-            type: pageContext.basic.type
-          } : null
-        });
       }
+    });
 
-      // 正常回复
-      const aiMessage = message.content || '抱歉，我无法生成回复。';
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      },
+    });
 
-      // 检查是否有工具调用结果，并提取搜索来源
-      let searchSources: SearchResult[] = [];
-      if (ToolResultProcessor.containsToolResults(processedMessages)) {
-        searchSources = ToolResultProcessor.extractSearchSources(processedMessages);
-        console.log('提取到搜索来源:', searchSources.length, '个');
+  } catch (error) {
+    console.error('API错误:', error);
+    return new Response('服务器错误', { status: 500 });
+  }
+}
+
+// 工具执行函数
+async function executeToolCall(toolCall: any) {
+  try {
+    console.log('执行工具调用:', toolCall);
+    
+    if (!toolCall || !toolCall.function || !toolCall.function.name) {
+      throw new Error('工具调用格式不正确');
+    }
+
+    switch (toolCall.function.name) {
+      case 'get_weather':
+        return await executeWeatherTool(toolCall.function.arguments);
+      case 'web_search':
+        return await executeWebSearchTool(toolCall.function.arguments);
+      case 'openmanus_web_automation':
+      case 'openmanus_code_execution':
+      case 'openmanus_file_operations':
+      case 'openmanus_general_task':
+        return await executeOpenManusTools(toolCall);
+      default:
+        throw new Error(`未知工具: ${toolCall.function.name}`);
+    }
+  } catch (error) {
+    console.error('工具执行错误:', error);
+    throw error;
+  }
+}
+
+// 实现实际的天气工具
+async function executeWeatherTool(argumentsStr: string) {
+  try {
+    console.log('天气工具参数:', argumentsStr);
+    
+    let args;
+    if (!argumentsStr || argumentsStr.trim() === '') {
+      return {
+        success: false,
+        error: '缺少位置参数，请提供要查询的城市名称',
+        location: 'unknown'
+      };
+    }
+    
+    if (typeof argumentsStr === 'string') {
+      try {
+        args = JSON.parse(argumentsStr);
+      } catch (parseError) {
+        console.error('参数解析失败:', parseError);
+        return {
+          success: false,
+          error: `参数格式错误: ${argumentsStr}`,
+          location: 'unknown'
+        };
       }
-
-      return NextResponse.json({
-        message: aiMessage,
-        messageId: data.id || Date.now().toString(),
-        usage: data.usage,
-        requiresToolCalls: false,
-        searchSources: searchSources.length > 0 ? searchSources : undefined,
-        // 添加上下文使用标记
-        contextUsed: pageContext ? PageContextProcessor.isPageRelatedQuestion(
-          processedMessages[processedMessages.length - 1]?.content || ''
-        ) : false,
-        pageInfo: pageContext ? {
-          title: pageContext.basic.title,
-          url: pageContext.basic.url,
-          type: pageContext.basic.type
-        } : null
-      });
-
-    } catch (networkError) {
-      console.error('网络连接错误:', networkError);
+    } else {
+      args = argumentsStr;
+    }
+    
+    const { location } = args;
+    
+    if (!location || typeof location !== 'string') {
+      return {
+        success: false,
+        error: '位置参数无效，请提供有效的城市名称',
+        location: location || 'unknown'
+      };
+    }
+    console.log('查询天气:', { location });
+    
+    const QWEATHER_TOKEN = process.env.QWEATHER_API_KEY;
+    if (!QWEATHER_TOKEN) {
+      return {
+        success: false,
+        error: '和风天气API密钥未配置',
+        location
+      };
+    }
+    
+    try {
+      // 1. 获取城市位置信息
+      const locationResponse = await fetch(
+        `https://geoapi.qweather.com/v2/city/lookup?location=${encodeURIComponent(location)}&key=${QWEATHER_TOKEN}&lang=zh`
+      );
       
-      // 网络连接失败时返回智能模拟回复
-      return generateFallbackResponse(userContent);
+      if (!locationResponse.ok) {
+        throw new Error(`位置查询失败: ${locationResponse.status}`);
+      }
+      
+      const locationData = await locationResponse.json();
+      console.log('位置查询结果:', locationData);
+      
+      if (!locationData.location || locationData.location.length === 0) {
+        return {
+          success: false,
+          error: `未找到城市: ${location}`,
+          location
+        };
+      }
+      
+      const cityInfo = locationData.location[0];
+      
+      // 2. 获取天气信息
+      const weatherResponse = await fetch(
+        `https://devapi.qweather.com/v7/weather/now?location=${cityInfo.id}&key=${QWEATHER_TOKEN}&lang=zh`
+      );
+      
+      if (!weatherResponse.ok) {
+        throw new Error(`天气查询失败: ${weatherResponse.status}`);
+      }
+      
+      const weatherData = await weatherResponse.json();
+      console.log('天气查询结果:', weatherData);
+      
+      if (weatherData.code !== '200') {
+        return {
+          success: false,
+          error: `天气查询失败: ${weatherData.code}`,
+          location
+        };
+      }
+      
+      const weather = weatherData.now;
+      return {
+        success: true,
+        location: `${cityInfo.name}, ${cityInfo.adm1}`,
+        data: {
+          temperature: weather.temp,
+          condition: weather.text,
+          humidity: weather.humidity,
+          windDirection: weather.windDir,
+          windSpeed: weather.windSpeed,
+          pressure: weather.pressure,
+          visibility: weather.vis,
+          updateTime: weather.obsTime
+        }
+      };
+      
+    } catch (apiError) {
+      console.error('天气API调用错误:', apiError);
+      return {
+        success: false,
+        error: '天气服务暂时不可用',
+        location
+      };
     }
 
   } catch (error) {
-    console.error('聊天API错误:', error);
+    console.error('天气工具执行错误:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : '参数解析失败',
+      location: 'unknown'
+    };
+  }
+}
+
+async function executeWebSearchTool(argumentsStr: string) {
+  try {
+    console.log('搜索工具参数:', argumentsStr);
     
-    return NextResponse.json({
-      message: '抱歉，我现在遇到了一些技术问题。请稍后再试，或者重新发送您的消息。',
-      messageId: Date.now().toString(),
-      error: error instanceof Error ? error.message : '未知错误',
-      isSimulated: true
-    });
-  }
-}
-
-// 生成智能备用回复的函数
-function generateFallbackResponse(userContent: string): NextResponse {
-  const lowerContent = userContent.toLowerCase();
-  let message = '';
-
-  // 根据用户输入生成相应的模拟回复
-  if (lowerContent.includes('天气') || lowerContent.includes('weather')) {
-    message = '抱歉，我现在无法获取实时天气信息。您可以尝试重新提问，或者稍后再试。建议您查看本地天气应用或网站获取准确的天气信息。';
-  } else if (lowerContent.includes('你好') || lowerContent.includes('hello') || lowerContent.includes('hi')) {
-    message = '你好！我是你的 AI 助手。虽然现在网络连接有些问题，但我还是很高兴为你服务！有什么可以帮助你的吗？';
-  } else if (lowerContent.includes('什么') || lowerContent.includes('怎么') || lowerContent.includes('如何')) {
-    message = '这是一个很好的问题！虽然我现在无法访问在线服务，但我建议你可以：\n\n1. 尝试重新发送消息\n2. 检查网络连接\n3. 稍后再试\n\n有什么其他我可以帮助的吗？';
-  } else if (lowerContent.includes('帮助') || lowerContent.includes('help')) {
-    message = '当然愿意帮助你！虽然现在我的在线功能暂时不可用，但你可以：\n\n• 重新尝试发送消息\n• 检查一下网络连接\n• 过几分钟再试试\n\n我会尽力为你提供帮助的！';
-  } else if (lowerContent.includes('谢谢') || lowerContent.includes('thank')) {
-    message = '不客气！虽然现在遇到了一些技术问题，但很高兴能帮到你。如果还有其他问题，随时告诉我！';
-  } else if (lowerContent.includes('测试') || lowerContent.includes('test')) {
-    message = '测试成功！虽然我现在是在离线模式下运行，但基本功能正常。一旦网络连接恢复，我就能提供更完整的服务了。';
-  } else {
-    message = `我收到了你的消息："${userContent}"。虽然现在我无法连接到在线 AI 服务，但我想说这看起来很有趣！一旦网络连接恢复，我就能给你一个更详细的回复了。\n\n现在你可以尝试重新发送消息，或者稍后再试。`;
-  }
-
-  return NextResponse.json({
-    message,
-    messageId: Date.now().toString(),
-    error: '网络连接问题，使用模拟回复',
-    isSimulated: true
-  });
-}
-
-// 健康检查端点
-export async function GET() {
-  return NextResponse.json({ 
-    status: 'ok', 
-    service: 'AI Chat API',
-    timestamp: new Date().toISOString(),
-    features: {
-      chat: true,
-      tools: true,
-      weather: true,
-      webSearch: true,
-      pageContext: true,
-      enhancedProcessing: true,
-      openManusIntegration: true
+    let args;
+    if (!argumentsStr || argumentsStr.trim() === '') {
+      return {
+        success: false,
+        error: '缺少搜索关键词，请提供要搜索的内容',
+        query: 'unknown'
+      };
     }
+    
+    if (typeof argumentsStr === 'string') {
+      try {
+        args = JSON.parse(argumentsStr);
+      } catch (parseError) {
+        console.error('搜索参数解析失败:', parseError);
+        return {
+          success: false,
+          error: `参数格式错误: ${argumentsStr}`,
+          query: 'unknown'
+        };
+      }
+    } else {
+      args = argumentsStr;
+    }
+    
+    const { query } = args;
+    
+    if (!query || typeof query !== 'string') {
+      return {
+        success: false,
+        error: '搜索关键词无效，请提供有效的搜索内容',
+        query: query || 'unknown'
+      };
+    }
+    console.log('执行搜索:', query);
+    
+    // 调用现有的搜索API
+    const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/tools`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tool_calls: [{
+          id: `search_${Date.now()}`,
+          type: 'function',
+          function: {
+            name: 'web_search',
+            arguments: JSON.stringify({ query })
+          }
+        }]
+      })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`搜索API调用失败: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    if (!data.success || !data.results || data.results.length === 0) {
+      return {
+        success: false,
+        error: '搜索失败或无结果',
+        query
+      };
+    }
+    
+    // 提取搜索结果
+    const toolResult = data.results[0];
+    if (toolResult.role === 'tool') {
+      const resultData = JSON.parse(toolResult.content);
+      return {
+        success: true,
+        query,
+        results: resultData.results || [],
+        totalResults: resultData.totalResults || 0
+      };
+    }
+    
+    return {
+      success: false,
+      error: '搜索结果格式错误',
+      query
+    };
+    
+  } catch (error) {
+    console.error('搜索工具执行错误:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : '搜索失败',
+      query: 'unknown'
+    };
+  }
+}
+
+async function executeOpenManusTools(toolCall: any) {
+  try {
+    console.log('执行OpenManus工具:', toolCall);
+    
+    // 调用现有的OpenManus API
+    const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/tools`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tool_calls: [toolCall]
+      })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`OpenManus API调用失败: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    if (!data.success) {
+      return {
+        success: false,
+        error: data.error || 'OpenManus执行失败',
+        tool: toolCall.function.name
+      };
+    }
+    
+    return {
+      success: true,
+      tool: toolCall.function.name,
+      result: data.results
+    };
+    
+  } catch (error) {
+    console.error('OpenManus工具执行错误:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'OpenManus执行失败',
+      tool: toolCall.function.name
+    };
+  }
+}
+
+export async function GET() {
+  return new Response(JSON.stringify({ 
+    message: '聊天API运行正常',
+    timestamp: new Date().toISOString()
+  }), {
+    headers: { 'Content-Type': 'application/json' }
   });
 }
