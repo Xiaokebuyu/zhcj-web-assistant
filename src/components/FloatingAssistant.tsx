@@ -36,6 +36,87 @@ const VOICE_OPTIONS = [
   { id: 'xiaoxuan', name: '晓萱（知性女声）' },
 ];
 
+// 添加 ChatView 组件
+
+interface ChatViewProps {
+  messages: ReasoningChatMessage[];
+  messagesContainerRef: React.RefObject<HTMLDivElement | null>;
+  renderContextStatus: () => React.ReactNode;
+  renderTranscriptDisplay: () => React.ReactNode;
+  pageContext: PageContext | null;
+  isLoading: boolean;
+  toggleReasoning: (id: string) => void;
+  playAudio: (audioUrl: string) => void;
+}
+
+const ChatView: React.FC<ChatViewProps> = ({
+  messages,
+  messagesContainerRef,
+  renderContextStatus,
+  renderTranscriptDisplay,
+  pageContext,
+  isLoading,
+  toggleReasoning,
+  playAudio
+}) => (
+  <div
+    className="flex-1 overflow-y-auto p-6"
+    ref={messagesContainerRef}
+    onWheel={(e) => e.stopPropagation()}
+    onTouchStart={(e) => e.stopPropagation()}
+    onTouchMove={(e) => e.stopPropagation()}
+  >
+    {/* 页面上下文状态 */}
+    {renderContextStatus()}
+
+    {/* 实时转录显示区域 */}
+    {renderTranscriptDisplay()}
+
+    <div className="space-y-4">
+      {messages.length === 0 ? (
+        <div className="text-center py-8">
+          <div className="w-16 h-16 bg-gradient-to-r from-orange-100 to-amber-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <MessageCircle size={24} className="text-orange-500" strokeWidth={2} />
+          </div>
+          <p className="text-gray-600 text-sm leading-relaxed">
+            你好！我是你的 AI 助手<br />
+            {pageContext ? '我可以帮你分析当前页面内容，或回答其他问题' : '有什么可以帮助你的吗？'}
+          </p>
+        </div>
+      ) : (
+        messages.map((message) => (
+          <UnifiedMessage
+            key={message.id}
+            message={message}
+            onToggleReasoning={() => toggleReasoning(message.id)}
+            onPlayAudio={playAudio}
+          />
+        ))
+      )}
+
+      {isLoading && (
+        <div className="flex justify-start animate-in fade-in duration-300">
+          <div className="flex gap-3">
+            <div className="w-8 h-8 bg-black rounded-full flex items-center justify-center">
+              <span className="text-white text-xs font-bold">AI</span>
+            </div>
+            <div className="bg-white border border-gray-100 px-4 py-3 rounded-2xl rounded-bl-md text-sm text-gray-600 shadow-sm">
+              <div className="flex items-center gap-1">
+                正在思考
+                <div className="flex gap-1">
+                  <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                  <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                  <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  </div>
+);
+
 export default function FloatingAssistant({ config = {}, onError }: FloatingAssistantProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<ReasoningChatMessage[]>([]);
@@ -89,7 +170,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   const [contextStatus, setContextStatus] = useState<ContextStatus>('disabled');
   const [lastContextUpdate, setLastContextUpdate] = useState<Date | null>(null);
 
-  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   
@@ -849,7 +930,9 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
         let reasoningStartTime = Date.now();
         let currentPostToolReasoningMessage: ReasoningChatMessage | null = null;
         let postToolReasoningStartTime = Date.now();
-        let currentFinalMessage: ReasoningChatMessage | null = null;
+        let preToolFinalMessage: ReasoningChatMessage | null = null;
+        let postToolFinalMessage: ReasoningChatMessage | null = null;
+        let toolDecisionReceived = false;
         let buffer = ''; // 添加缓冲区处理不完整的数据
 
       while (true) {
@@ -865,25 +948,29 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                   try {
                     const parsed: UnifiedChatResponse = JSON.parse(data);
                     // 处理剩余的数据...
-                    if (parsed.type === 'final_content' && !currentFinalMessage) {
-                      currentFinalMessage = {
-                        id: `final-${parsed.messageId || Date.now()}`,
-                        role: 'assistant',
-                        content: parsed.content || '',
-                        timestamp: new Date(),
-                        messageType: 'assistant_final'
-                      };
-                      setMessages(prev => [...prev, currentFinalMessage!]);
-                    } else if (parsed.type === 'final_content' && currentFinalMessage && parsed.content) {
-                      // 追加内容
-                      setMessages(prev => prev.map(msg => 
-                        msg.id === currentFinalMessage!.id 
-                          ? { 
-                              ...msg, 
-                              content: msg.content + parsed.content
-                            }
-                          : msg
-                      ));
+                    if (parsed.type === 'final_content') {
+                      const targetMsgRef = toolDecisionReceived ? 'post' : 'pre';
+                      let targetMessage: ReasoningChatMessage | null = toolDecisionReceived ? postToolFinalMessage : preToolFinalMessage;
+
+                      if (!targetMessage) {
+                        targetMessage = {
+                          id: `${targetMsgRef}-final-${parsed.messageId || Date.now()}`,
+                          role: 'assistant',
+                          content: parsed.content || '',
+                          timestamp: new Date(),
+                          messageType: 'assistant_final'
+                        };
+                        setMessages(prev => [...prev, targetMessage!]);
+                        if (toolDecisionReceived) {
+                          postToolFinalMessage = targetMessage;
+                        } else {
+                          preToolFinalMessage = targetMessage;
+                        }
+                      } else if (parsed.content) {
+                        setMessages(prev => prev.map(msg =>
+                          msg.id === targetMessage!.id ? { ...msg, content: msg.content + parsed.content } : msg
+                        ));
+                      }
                     }
                   } catch (e) {
                     console.error('解析剩余数据错误:', e, line);
@@ -1007,6 +1094,8 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                 };
                 setMessages(prev => [...prev, currentToolMessage!]);
 
+                toolDecisionReceived = true; // 标记已进入工具执行阶段
+
               } else if (parsed.type === 'tool_result') {
                 // 更新工具执行结果
                 if (currentToolMessage) {
@@ -1024,41 +1113,52 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                 }
 
               } else if (parsed.type === 'final_content') {
-                // 处理流式最终回复 - 使用防抖机制减少渲染频率
-                if (!currentFinalMessage) {
-                  currentFinalMessage = {
-                    id: `final-${parsed.messageId}`,
+                // 根据是否已收到 tool_decision 决定写入哪一段回复
+                const targetMsgRef = toolDecisionReceived ? 'post' : 'pre';
+                let targetMessage: ReasoningChatMessage | null = toolDecisionReceived ? postToolFinalMessage : preToolFinalMessage;
+
+                if (!targetMessage) {
+                  targetMessage = {
+                    id: `${targetMsgRef}-final-${parsed.messageId}`,
                     role: 'assistant',
                     content: '',
                     timestamp: new Date(),
                     messageType: 'assistant_final'
                   };
-                  setMessages(prev => [...prev, currentFinalMessage!]);
-                  // 初始化累积内容
-                  streamingContentRef.current[currentFinalMessage.id] = '';
+                  setMessages(prev => [...prev, targetMessage!]);
+                  // 存储回引用
+                  if (toolDecisionReceived) {
+                    postToolFinalMessage = targetMessage;
+                  } else {
+                    preToolFinalMessage = targetMessage;
+                  }
+                  streamingContentRef.current[targetMessage.id] = '';
                 }
-                
-                // 增量累积内容，使用防抖更新
-                if (parsed.content && currentFinalMessage) {
-                  const messageId = currentFinalMessage.id;
-                  streamingContentRef.current[messageId] = 
-                    (streamingContentRef.current[messageId] || '') + parsed.content;
-                  
-                  // 使用防抖更新UI
+
+                // 增量累积内容
+                if (parsed.content && targetMessage) {
+                  const messageId = targetMessage.id;
+                  streamingContentRef.current[messageId] = (streamingContentRef.current[messageId] || '') + parsed.content;
                   debouncedContentUpdate(messageId, streamingContentRef.current[messageId]);
                 }
 
               } else if (parsed.type === 'done') {
-                // 确保流式内容最终更新
-                if (currentFinalMessage) {
-                  const messageId = currentFinalMessage.id;
+                // 确保两段回复的流式内容最终更新
+                const finalizeMessage = (msg: ReasoningChatMessage | null): string | null => {
+                  if (!msg) return null;
+                  const messageId = msg.id;
                   const finalContent = streamingContentRef.current[messageId];
                   if (finalContent) {
                     immediateContentUpdate(messageId, finalContent);
-                    // 清理累积内容
                     delete streamingContentRef.current[messageId];
+                    return finalContent;
                   }
-                }
+                  // 如果已经没有缓存，则使用msg.content
+                  return msg.content || null;
+                };
+
+                const preFinalContent = finalizeMessage(preToolFinalMessage);
+                const postFinalContent = finalizeMessage(postToolFinalMessage);
 
                 // 完成所有处理
                 if (currentToolMessage) {
@@ -1098,28 +1198,28 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                   delete reasoningContentRef.current[messageId];
                 }
 
-                // 处理无工具调用时的最终回复 - 重要修复
-                if (!currentFinalMessage && parsed.final_content) {
-                  // 创建最终回复消息
-                  currentFinalMessage = {
-                    id: `final-${parsed.messageId || Date.now()}`,
+                // 如果完全没有 final_content (边缘情况)
+                if (!preToolFinalMessage && !postToolFinalMessage && parsed.final_content) {
+                  postToolFinalMessage = {
+                    id: `post-final-${parsed.messageId || Date.now()}`,
                     role: 'assistant',
                     content: parsed.final_content,
                     timestamp: new Date(),
                     messageType: 'assistant_final'
                   };
-                  setMessages(prev => [...prev, currentFinalMessage!]);
+                  setMessages(prev => [...prev, postToolFinalMessage!]);
                 }
 
-                // 生成语音（如果启用）
-                if (currentFinalMessage && enableVoice && voiceSettings.autoPlay) {
-                  const finalContent = currentFinalMessage.content;
-                  if (finalContent) {
+                // 生成语音（如果启用）- 优先播放 postTool，如果不存在则播放 preTool
+                const voiceTarget = postToolFinalMessage || preToolFinalMessage;
+                const finalContentForVoice = postFinalContent || preFinalContent;
+                if (voiceTarget && finalContentForVoice && enableVoice && voiceSettings.autoPlay) {
+                  if (finalContentForVoice) {
                     try {
-                      const audioUrl = await generateSpeech(finalContent);
+                      const audioUrl = await generateSpeech(finalContentForVoice);
                       if (audioUrl) {
                         setMessages(prev => prev.map(msg => 
-                          msg.id === currentFinalMessage!.id 
+                          msg.id === voiceTarget!.id 
                             ? { ...msg, audioUrl }
                             : msg
                         ));
@@ -1573,66 +1673,6 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     </div>
   );
 
-  // 对话视图组件
-  const ChatView = () => (
-    <div 
-      className="flex-1 overflow-y-auto p-6"
-      ref={messagesContainerRef}
-      onWheel={(e) => e.stopPropagation()} // 确保滚轮事件不被阻止
-      onTouchStart={(e) => e.stopPropagation()} // 确保触摸滚动不被阻止
-      onTouchMove={(e) => e.stopPropagation()} // 确保触摸滚动不被阻止
-    >
-      {/* 页面上下文状态 */}
-      {renderContextStatus()}
-      
-      {/* 实时转录显示区域 */}
-      {renderTranscriptDisplay()}
-
-      <div className="space-y-4">
-        {messages.length === 0 ? (
-          <div className="text-center py-8">
-            <div className="w-16 h-16 bg-gradient-to-r from-orange-100 to-amber-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <MessageCircle size={24} className="text-orange-500" strokeWidth={2} />
-            </div>
-            <p className="text-gray-600 text-sm leading-relaxed">
-              你好！我是你的 AI 助手<br />
-              {pageContext ? '我可以帮你分析当前页面内容，或回答其他问题' : '有什么可以帮助你的吗？'}
-            </p>
-          </div>
-        ) : (
-          messages.map((message) => (
-            <UnifiedMessage
-              key={message.id}
-              message={message}
-              onToggleReasoning={() => toggleReasoning(message.id)}
-              onPlayAudio={playAudio}
-            />
-          ))
-        )}
-        
-        {isLoading && (
-          <div className="flex justify-start animate-in fade-in duration-300">
-            <div className="flex gap-3">
-              <div className="w-8 h-8 bg-black rounded-full flex items-center justify-center">
-                <span className="text-white text-xs font-bold">AI</span>
-              </div>
-              <div className="bg-white border border-gray-100 px-4 py-3 rounded-2xl rounded-bl-md text-sm text-gray-600 shadow-sm">
-                <div className="flex items-center gap-1">
-                  正在思考
-                  <div className="flex gap-1">
-                    <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0ms'}}></div>
-                    <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '150ms'}}></div>
-                    <div className="w-1 h-1 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '300ms'}}></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-
   // 豆包语音界面组件
   const DoubaoVoiceView = () => (
     <div className="flex-1">
@@ -1860,7 +1900,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
 
             {/* 内容区域 */}
             {assistantMode === 'text' ? (
-              messages.length === 0 ? <InitialView /> : <ChatView />
+              messages.length === 0 ? <InitialView /> : <ChatView messages={messages} messagesContainerRef={messagesContainerRef} renderContextStatus={renderContextStatus} renderTranscriptDisplay={renderTranscriptDisplay} pageContext={pageContext} isLoading={isLoading} toggleReasoning={toggleReasoning} playAudio={playAudio} />
             ) : (
               <DoubaoVoiceView />
             )}
@@ -1875,9 +1915,10 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                     type="text"
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
-                    onKeyPress={(e) => {
+                    onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
+                        e.stopPropagation();
                         sendMessage(inputValue);
                       }
                     }}
