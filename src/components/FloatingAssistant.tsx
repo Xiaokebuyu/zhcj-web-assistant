@@ -47,6 +47,7 @@ interface ChatViewProps {
   isLoading: boolean;
   toggleReasoning: (id: string) => void;
   playAudio: (audioUrl: string) => void;
+  regenerateAudio: (messageId: string, text: string) => void;
 }
 
 const ChatView: React.FC<ChatViewProps> = ({
@@ -57,7 +58,8 @@ const ChatView: React.FC<ChatViewProps> = ({
   pageContext,
   isLoading,
   toggleReasoning,
-  playAudio
+  playAudio,
+  regenerateAudio
 }) => (
   <div
     className="flex-1 overflow-y-auto p-6"
@@ -90,6 +92,7 @@ const ChatView: React.FC<ChatViewProps> = ({
             message={message}
             onToggleReasoning={() => toggleReasoning(message.id)}
             onPlayAudio={playAudio}
+            onRegenerateAudio={regenerateAudio}
           />
         ))
       )}
@@ -137,6 +140,10 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     audioQuality: 'medium',
     lastActivity: Date.now()
   });
+  
+  // OpenManus 任务监控状态
+  const [pendingTaskIds, setPendingTaskIds] = useState<string[]>([]);
+  const taskWatchersRef = useRef<Record<string, NodeJS.Timeout | null>>({});
   
   const [voiceState, setVoiceState] = useState<VoiceState>({
     isListening: false,
@@ -190,6 +197,12 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   
   // 累积思维链内容的引用
   const reasoningContentRef = useRef<{ [messageId: string]: string }>({});
+  
+  // 新增: 音频队列及辅助函数所需的引用
+  const audioQueueRef = useRef<string[]>([]);
+  const isAudioPlayingRef = useRef<boolean>(false);
+  // 每条消息的待朗读缓冲区
+  const speechBufferRef = useRef<{ [msgId: string]: string }>({});
   
   // 自动滚动函数
   const scrollToBottom = useCallback((smooth = true) => {
@@ -763,12 +776,24 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
 
   // 播放语音
   const playAudio = useCallback((audioUrl: string) => {
-    if (audioRef.current) {
-      audioRef.current.src = audioUrl;
-      audioRef.current.play().catch(error => {
-        console.error('音频播放失败:', error);
-      });
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    // 如果点击同一个音频且正在播放，则暂停
+    if (audio.src === audioUrl && !audio.paused) {
+      audio.pause();
+      return;
     }
+
+    // 如果同一音频已加载但暂停，继续播放
+    if (audio.src === audioUrl && audio.paused) {
+      audio.play().catch(err => console.error('音频继续播放失败:', err));
+      return;
+    }
+
+    // 播放新音频
+    audio.src = audioUrl;
+    audio.play().catch(err => console.error('音频播放失败:', err));
   }, []);
 
   // 获取工具显示名称
@@ -887,7 +912,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   }, []);
 
   // 完全重写的发送消息函数
-  const sendMessage = useCallback(async (content: string, isVoice = false) => {
+  const sendMessage = useCallback(async (content: string, isVoice = false, internal = false) => {
     if (!content.trim() || isLoading) return;
 
     const userMessage: ReasoningChatMessage = {
@@ -899,7 +924,10 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
       isVoice
     };
 
-    setMessages(prev => [...prev, userMessage]);
+    if (!internal) {
+      setMessages(prev => [...prev, userMessage]);
+    }
+
     setInputValue('');
     setIsLoading(true);
 
@@ -908,7 +936,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: [...messages, userMessage].map(m => ({
+          messages: [...messages, ...(internal ? [] : [userMessage])].map(m => ({
             role: m.role,
             content: m.content
           })),
@@ -926,14 +954,16 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
       }
 
       let currentReasoningMessage: ReasoningChatMessage | null = null;
-              let currentToolMessage: ReasoningChatMessage | null = null;
-        let reasoningStartTime = Date.now();
-        let currentPostToolReasoningMessage: ReasoningChatMessage | null = null;
-        let postToolReasoningStartTime = Date.now();
-        let preToolFinalMessage: ReasoningChatMessage | null = null;
-        let postToolFinalMessage: ReasoningChatMessage | null = null;
-        let toolDecisionReceived = false;
-        let buffer = ''; // 添加缓冲区处理不完整的数据
+      let currentToolMessage: ReasoningChatMessage | null = null;
+      let reasoningStartTime = Date.now();
+      let currentPostToolReasoningMessage: ReasoningChatMessage | null = null;
+      let postToolReasoningStartTime = Date.now();
+      let preToolFinalMessage: ReasoningChatMessage | null = null;
+      let postToolFinalMessage: ReasoningChatMessage | null = null;
+      let toolDecisionReceived = false;
+      let buffer = ''; // 添加缓冲区处理不完整的数据
+      // 标记是否已为本次 assistant 回复生成过语音，防止重复请求
+      let voiceGenerated = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -1138,8 +1168,15 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                 // 增量累积内容
                 if (parsed.content && targetMessage) {
                   const messageId = targetMessage.id;
-                  streamingContentRef.current[messageId] = (streamingContentRef.current[messageId] || '') + parsed.content;
+                  const delta = parsed.content;
+                  streamingContentRef.current[messageId] = (streamingContentRef.current[messageId] || '') + delta;
                   debouncedContentUpdate(messageId, streamingContentRef.current[messageId]);
+
+                  // 新增：增量语音处理（仅当启用增量TTS时）
+                  if (incrementalTTS && !voiceGenerated) {
+                    processStreamingSpeech(messageId, delta);
+                    voiceGenerated = true; // 已生成语音
+                  }
                 }
 
               } else if (parsed.type === 'done') {
@@ -1210,26 +1247,71 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                   setMessages(prev => [...prev, postToolFinalMessage!]);
                 }
 
-                // 生成语音（如果启用）- 优先播放 postTool，如果不存在则播放 preTool
-                const voiceTarget = postToolFinalMessage || preToolFinalMessage;
-                const finalContentForVoice = postFinalContent || preFinalContent;
-                if (voiceTarget && finalContentForVoice && enableVoice && voiceSettings.autoPlay) {
-                  if (finalContentForVoice) {
-                    try {
-                      const audioUrl = await generateSpeech(finalContentForVoice);
-                      if (audioUrl) {
-                        setMessages(prev => prev.map(msg => 
-                          msg.id === voiceTarget!.id 
-                            ? { ...msg, audioUrl }
-                            : msg
-                        ));
-                        setTimeout(() => playAudio(audioUrl), 500);
+                // 如果未启用增量朗读，则在回复完成后一次性生成并播放完整语音
+                if (!incrementalTTS && !voiceGenerated) {
+                  const voiceTarget = postToolFinalMessage || preToolFinalMessage;
+                  const finalContentForVoice = postFinalContent || preFinalContent;
+                  if (voiceTarget && finalContentForVoice && enableVoice && voiceSettings.autoPlay) {
+                    if (finalContentForVoice) {
+                      try {
+                        const audioUrl = await generateSpeech(finalContentForVoice);
+                        if (audioUrl) {
+                          setMessages(prev => prev.map(msg => 
+                            msg.id === voiceTarget!.id 
+                              ? { ...msg, audioUrl }
+                              : msg
+                          ));
+                          setTimeout(() => playAudio(audioUrl), 500);
+                          voiceGenerated = true; // 已生成语音
+                        }
+                      } catch (error) {
+                        console.error('生成语音失败:', error);
                       }
-                    } catch (error) {
-                      console.error('生成语音失败:', error);
                     }
                   }
                 }
+
+                // 如果启用了增量TTS，确保朗读残余文本
+                if (incrementalTTS) {
+                  for (const [msgId, remaining] of Object.entries(speechBufferRef.current)) {
+                    if (remaining.trim()) {
+                      try {
+                        const url = await generateSpeech(remaining);
+                        if (url) enqueueAudio(url);
+                      } catch (err) {
+                        console.error('清空残余TTS失败:', err);
+                      }
+                    }
+                    // 无论成功与否都删除，避免重复
+                    delete speechBufferRef.current[msgId];
+                  }
+                } 
+              } else if ((parsed as any).type === 'pending_openmanus') {
+                // 处理OpenManus异步任务挂起
+                const task_ids: string[] = (parsed as any).task_ids || [];
+                if (task_ids.length > 0) {
+                  console.log('检测到未完成的OpenManus任务:', task_ids);
+
+                  // 将任务ID保存到待监控列表
+                  setPendingTaskIds(prev => {
+                    const set = new Set(prev);
+                    task_ids.forEach(id => set.add(id));
+                    return Array.from(set);
+                  });
+
+                  // 标记当前工具执行消息仍在执行中
+                  if (currentToolMessage) {
+                    setMessages(prev => prev.map(msg =>
+                      msg.id === currentToolMessage!.id && msg.toolExecution
+                        ? { ...msg, toolExecution: { ...msg.toolExecution, status: 'executing' } }
+                        : msg
+                    ));
+                  }
+                }
+
+                // 流在服务器端已经关闭，这里直接结束循环
+                reader.cancel();
+                break;
               }
             } catch (e) {
               console.error('解析响应错误:', e);
@@ -1686,26 +1768,236 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
           className="flex-1"
         />
       ) : (
-        <div className="flex-1 flex items-center justify-center p-6">
-          <div className="text-center">
-            <div className="w-24 h-24 bg-gradient-to-br from-purple-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
-              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
-              </svg>
-            </div>
-            <h3 className="text-lg font-medium text-gray-900 mb-2">豆包语音助手</h3>
-            <p className="text-gray-600 mb-6">点击开始语音对话</p>
-            <button 
+        /* 极简欢迎界面 */
+        <div className="flex flex-col h-full bg-white relative">
+          {/* 顶部右侧设置按钮 */}
+          <button
+            onClick={() => setShowSettings(!showSettings)}
+            className="absolute top-4 right-4 p-2 rounded-full hover:bg-gray-100 transition-colors"
+            title="语音设置"
+          >
+            <Settings size={18} className="text-gray-500" />
+          </button>
+
+          {/* 中央蓝色渐变圆形图标 */}
+          <div className="flex-1 flex items-center justify-center">
+            <div className="w-40 h-40 rounded-full bg-gradient-to-br from-sky-300 to-blue-600 shadow-lg" />
+          </div>
+
+          {/* 底部操作区 */}
+          <div className="w-full flex items-center justify-center gap-6 pb-10">
+            {/* 开始语音按钮 */}
+            <button
               onClick={startVoiceCall}
-              className="px-6 py-2.5 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg hover:from-purple-600 hover:to-purple-700 transition-all shadow-sm"
+              className="w-14 h-14 flex items-center justify-center rounded-full bg-black text-white hover:opacity-90 transition"
             >
-              开始通话
+              <Mic size={24} />
+            </button>
+
+            {/* 关闭返回按钮 */}
+            <button
+              onClick={() => setAssistantMode('text')}
+              className="w-14 h-14 flex items-center justify-center rounded-full bg-gray-200 text-gray-700 hover:bg-gray-300 transition"
+            >
+              <X size={24} />
             </button>
           </div>
         </div>
       )}
     </div>
   );
+
+  // =============== 增量流式语音朗读相关 ===============
+
+  // 用于在音频播放结束时继续播放队列中的下一个音频
+  function playNextAudio() {
+    const audioElement = audioRef.current;
+    if (!audioElement) return;
+
+    if (audioQueueRef.current.length === 0) {
+      isAudioPlayingRef.current = false;
+      return;
+    }
+
+    const nextUrl = audioQueueRef.current.shift() as string;
+    isAudioPlayingRef.current = true;
+    audioElement.src = nextUrl;
+    audioElement.play().catch(err => {
+      console.error('音频播放失败:', err);
+      // 如果当前片段播放失败，尝试播放下一个
+      playNextAudio();
+    });
+  }
+
+  // 将音频URL加入队列，若当前没有播放则立即播放
+  function enqueueAudio(url: string) {
+    if (!url) return;
+    audioQueueRef.current.push(url);
+    if (!isAudioPlayingRef.current) {
+      playNextAudio();
+    }
+  }
+
+  // 在组件挂载时绑定 audio 元素的 ended 事件，以便自动播放下一个音频
+  useEffect(() => {
+    const audioElement = audioRef.current;
+    if (!audioElement) return;
+
+    const handleEnded = () => {
+      playNextAudio();
+    };
+
+    audioElement.addEventListener('ended', handleEnded);
+    return () => {
+      audioElement.removeEventListener('ended', handleEnded);
+    };
+  }, []);
+
+  // 将增量文本拆分为完整句子与剩余部分
+  function extractSentences(text: string): { completed: string[]; remaining: string } {
+    // 根据中英文常见句号、感叹号、问号进行分句
+    const SENTENCE_END_REGEX = /[。！？.!?]/;
+    const parts = text.split(SENTENCE_END_REGEX);
+    const endings = text.match(/[。！？.!?]/g) || [];
+
+    const completed: string[] = [];
+    for (let i = 0; i < endings.length; i++) {
+      completed.push(parts[i] + endings[i]);
+    }
+
+    const remaining = parts.length > endings.length ? parts[parts.length - 1] : '';
+    return { completed, remaining };
+  }
+
+  // 处理增量到来的文本并生成对应的语音
+  const processStreamingSpeech = useCallback(async (messageId: string, deltaText: string) => {
+    if (!enableVoice || !voiceSettings.autoPlay) return;
+
+    // 累积待朗读文本
+    speechBufferRef.current[messageId] = (speechBufferRef.current[messageId] || '') + deltaText;
+
+    const { completed, remaining } = extractSentences(speechBufferRef.current[messageId]);
+    // 更新缓冲区，保留未完整结束的句子
+    speechBufferRef.current[messageId] = remaining;
+
+    for (const sentence of completed) {
+      // 对每个完整句子请求 TTS，并加入播放队列
+      try {
+        const audioUrl = await generateSpeech(sentence);
+        if (audioUrl) {
+          enqueueAudio(audioUrl);
+        }
+      } catch (err) {
+        console.error('增量TTS生成失败:', err);
+      }
+    }
+  }, [enableVoice, voiceSettings.autoPlay, generateSpeech, enqueueAudio, extractSentences]);
+
+  // -- 增量流式朗读开关。如果为 true，则在生成回复时实时播放分句语音。
+  const incrementalTTS = false;
+
+  // ------------------------------------------------------------------
+  // 监听 pendingTaskIds，启动轮询检查任务状态
+  // ------------------------------------------------------------------
+  useEffect(() => {
+    const OPENMANUS_BASE_URL = process.env.NEXT_PUBLIC_OPENMANUS_API_URL || 'http://127.0.0.1:8001';
+
+    async function fetchTaskStatus(taskId: string) {
+      try {
+        const res = await fetch(`${OPENMANUS_BASE_URL}/api/task_status/${taskId}`);
+        if (!res.ok) throw new Error(`状态查询失败: ${res.status}`);
+        return await res.json();
+      } catch (err) {
+        console.error('获取任务状态失败:', err);
+        return null;
+      }
+    }
+
+    function startWatcher(taskId: string) {
+      if (taskWatchersRef.current[taskId]) return; // 已启动
+      const timer = setInterval(async () => {
+        const status = await fetchTaskStatus(taskId);
+        if (!status) return;
+        if (status.status === 'completed' || status.status === 'failed') {
+          clearInterval(taskWatchersRef.current[taskId]!);
+          taskWatchersRef.current[taskId] = null;
+
+          // 更新消息中的工具执行结果
+          setMessages(prev => prev.map(msg => {
+            if (msg.toolExecution) {
+              const idx = msg.toolExecution.results.findIndex(r => {
+                try {
+                  const obj = JSON.parse(r.content || '{}');
+                  return obj.task_id === taskId;
+                } catch {
+                  return false;
+                }
+              });
+              if (idx !== -1) {
+                const newResults = [...msg.toolExecution.results];
+                newResults[idx] = {
+                  tool_call_id: (newResults[idx] as any).tool_call_id || `tc_${taskId}`,
+                  role: 'tool',
+                  content: JSON.stringify({
+                    success: status.status === 'completed',
+                    task_id: taskId,
+                    status: status.status,
+                    result: status.result,
+                    error: status.error,
+                    progress: status.progress,
+                    timestamp: new Date().toISOString()
+                  })
+                } as any;
+                return {
+                  ...msg,
+                  toolExecution: {
+                    ...msg.toolExecution,
+                    results: newResults,
+                    status: status.status === 'completed' ? 'completed' : 'error',
+                    endTime: new Date()
+                  }
+                };
+              }
+            }
+            return msg;
+          }));
+
+          // 移除 taskId
+          setPendingTaskIds(prev => prev.filter(id => id !== taskId));
+        }
+      }, 5000); // 5秒一次
+      taskWatchersRef.current[taskId] = timer;
+    }
+
+    // 为每个待处理任务启动 watcher
+    pendingTaskIds.forEach(id => startWatcher(id));
+
+    // 清理函数：组件卸载时清除定时器
+    return () => {
+      Object.values(taskWatchersRef.current).forEach(timer => timer && clearInterval(timer));
+      taskWatchersRef.current = {};
+    };
+  }, [pendingTaskIds, setMessages]);
+
+  // 位于 pendingTaskIds 状态声明之后，新增两个引用用于检测何时应触发续写
+  const hadPendingRef = useRef(false);
+  const resumeTriggeredRef = useRef(false);
+
+  // 监听 pendingTaskIds 变化，自动在任务全部完成后触发 Deepseek 续写
+  useEffect(() => {
+    if (pendingTaskIds.length > 0) {
+      // 有任务进行中
+      hadPendingRef.current = true;
+      resumeTriggeredRef.current = false;
+    } else {
+      // 没有待处理任务，且之前存在挂起任务，且尚未触发续写
+      if (hadPendingRef.current && !resumeTriggeredRef.current) {
+        resumeTriggeredRef.current = true;
+        // 发送"继续"提示，让 Deepseek 在工具结果基础上继续推理
+        sendMessage('继续', false, true);
+      }
+    }
+  }, [pendingTaskIds, sendMessage]);
 
   // Anthropic 风格悬浮按钮 - 使用内联样式确保显示
   if (!isOpen) {
@@ -1900,7 +2192,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
 
             {/* 内容区域 */}
             {assistantMode === 'text' ? (
-              messages.length === 0 ? <InitialView /> : <ChatView messages={messages} messagesContainerRef={messagesContainerRef} renderContextStatus={renderContextStatus} renderTranscriptDisplay={renderTranscriptDisplay} pageContext={pageContext} isLoading={isLoading} toggleReasoning={toggleReasoning} playAudio={playAudio} />
+              messages.length === 0 ? <InitialView /> : <ChatView messages={messages} messagesContainerRef={messagesContainerRef} renderContextStatus={renderContextStatus} renderTranscriptDisplay={renderTranscriptDisplay} pageContext={pageContext} isLoading={isLoading} toggleReasoning={toggleReasoning} playAudio={playAudio} regenerateAudio={regenerateSpeech} />
             ) : (
               <DoubaoVoiceView />
             )}

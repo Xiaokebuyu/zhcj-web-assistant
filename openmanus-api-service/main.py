@@ -18,6 +18,7 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import uvicorn
+from fastapi.responses import StreamingResponse
 
 # 添加OpenManus路径
 OPENMANUS_DIR = Path(__file__).parent.parent / "OpenManus"
@@ -86,12 +87,40 @@ class TaskStatus(BaseModel):
     result: Optional[str] = None
     error: Optional[str] = None
 
+# -----------------------------------------------------------------------------
+# 任务日志队列支持 (用于前端实时查看执行进度)
+# -----------------------------------------------------------------------------
+
+# 每个 task_id 对应一个 asyncio.Queue，用于存储日志行
+task_log_queues: Dict[str, "asyncio.Queue[str]"] = {}
+
+
+class QueueLogHandler(logging.Handler):
+    """将日志消息写入 asyncio.Queue，供 SSE 接口实时推送"""
+
+    def __init__(self, queue: "asyncio.Queue[str]"):
+        super().__init__()
+        self.queue = queue
+
+    def emit(self, record: logging.LogRecord):
+        try:
+            msg = self.format(record)
+            # put_nowait 避免阻塞日志线程
+            if self.queue is not None:
+                self.queue.put_nowait(msg)
+        except Exception:  # pragma: no cover
+            # 避免日志处理中的任何异常打断主流程
+            pass
+
 # 内存中的任务存储
 tasks: Dict[str, TaskResponse] = {}
 task_processes: Dict[str, subprocess.Popen] = {}
 
 # 全局的OpenManus代理实例缓存
 _manus_instances: Dict[str, Any] = {}
+
+# 运行中任务索引: key->task_id
+running_task_index: Dict[str, str] = {}
 
 async def get_or_create_manus_instance(task_id: str) -> Any:
     """获取或创建OpenManus实例"""
@@ -112,6 +141,26 @@ async def get_or_create_manus_instance(task_id: str) -> Any:
 async def execute_openmanus_task(task_id: str, task_request: TaskRequest):
     """异步执行OpenManus任务"""
     manus_instance = None
+
+    # 为该任务创建日志队列并绑定到 manus_logger
+    log_queue: "asyncio.Queue[str]" = asyncio.Queue()
+    task_log_queues[task_id] = log_queue
+    queue_handler = QueueLogHandler(log_queue)
+    queue_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+
+    # 兼容 loguru.logger 与 standard logging.Logger
+    sink_id = None  # 用于记录 loguru 的 sink id，便于后续移除
+    if manus_logger:
+        if hasattr(manus_logger, "addHandler"):
+            # standard logging.Logger
+            manus_logger.addHandler(queue_handler)
+        else:
+            # loguru.logger 使用 add() 注册自定义 sink
+            # 将 queue_handler.emit 作为日志接收函数
+            sink_id = manus_logger.add(queue_handler.emit, format="{message}")
+    else:
+        logger.addHandler(queue_handler)
+
     try:
         # 更新任务状态为运行中
         tasks[task_id].status = "running"
@@ -120,7 +169,7 @@ async def execute_openmanus_task(task_id: str, task_request: TaskRequest):
         # 获取Manus实例
         manus_instance = await get_or_create_manus_instance(task_id)
         
-        # 执行任务
+        # 执行任务并实时写日志
         manus_logger.info(f"开始执行任务 {task_id}: {task_request.task_description}")
         
         # 使用OpenManus的run方法执行任务
@@ -150,14 +199,41 @@ async def execute_openmanus_task(task_id: str, task_request: TaskRequest):
                 if manus_logger:
                     manus_logger.error(f"清理Manus实例失败: {e}")
 
+        # 任务结束后写入队列终止标记，前端可据此关闭连接
+        try:
+            await log_queue.put("[任务结束]")
+        except Exception:
+            pass
+
+        # 移除日志处理器，防止泄漏
+        if manus_logger:
+            if hasattr(manus_logger, "removeHandler"):
+                manus_logger.removeHandler(queue_handler)
+            elif sink_id is not None:
+                manus_logger.remove(sink_id)
+        else:
+            logger.removeHandler(queue_handler)
+
+        # 从运行索引移除
+        key = f"{task_request.agent_type}:{task_request.task_description}:{json.dumps(task_request.context or {}, sort_keys=True)}"
+        if running_task_index.get(key) == task_id:
+            running_task_index.pop(key, None)
+
 @app.post("/api/execute_task", response_model=TaskResponse)
 async def execute_task(task_request: TaskRequest, background_tasks: BackgroundTasks):
     """执行OpenManus任务"""
     try:
-        # 生成任务ID
+        key = f"{task_request.agent_type}:{task_request.task_description}:{json.dumps(task_request.context or {}, sort_keys=True)}"
+
+        if key in running_task_index:
+            existing_id = running_task_index[key]
+            if existing_id in tasks and tasks[existing_id].status in {"pending", "running"}:
+                logger.info(f"复用已存在任务 {existing_id} 作为幂等返回")
+                return tasks[existing_id]
+
+        # 2. 新建任务
         task_id = str(uuid.uuid4())
-        
-        # 创建任务记录
+
         task_response = TaskResponse(
             task_id=task_id,
             status="pending",
@@ -166,12 +242,13 @@ async def execute_task(task_request: TaskRequest, background_tasks: BackgroundTa
             created_at=datetime.now().isoformat(),
             updated_at=datetime.now().isoformat()
         )
-        
+
         tasks[task_id] = task_response
-        
-        # 在后台执行任务
+
         background_tasks.add_task(execute_openmanus_task, task_id, task_request)
-        
+
+        running_task_index[key] = task_id
+
         logger.info(f"创建新任务: {task_id} - {task_request.task_description}")
         return task_response
         
@@ -251,6 +328,29 @@ async def cancel_task(task_id: str):
             logger.error(f"取消任务时清理实例失败: {e}")
     
     return {"message": "任务已取消"}
+
+# -----------------------------------------------------------------------------
+# 日志流 (Server-Sent Events) 接口
+# -----------------------------------------------------------------------------
+
+@app.get("/api/task_logs/{task_id}")
+async def stream_task_logs(task_id: str):
+    """以SSE形式实时推送指定任务的日志"""
+    if task_id not in task_log_queues:
+        raise HTTPException(status_code=404, detail="任务不存在或暂无日志")
+
+    log_queue = task_log_queues[task_id]
+
+    async def event_generator():
+        # 不断从队列获取日志并发送给客户端
+        while True:
+            msg = await log_queue.get()
+            yield f"data: {msg}\n\n"
+            # 遇到结束标记后退出循环
+            if msg.strip() == "[任务结束]":
+                break
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 if __name__ == "__main__":
     # 确保工作目录存在

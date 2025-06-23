@@ -44,7 +44,7 @@ export interface ToolCall {
       type: "function",
       function: {
         name: "web_search",
-        description: "搜索网络上的最新信息，获取实时资讯、新闻、资料等。当用户询问最新信息、新闻、实时数据或你无法确定答案时使用此工具",
+        description: "公共互联网关键词搜索，快速获取网页标题、简要摘要与链接。适用于获取事实性信息、新闻动态、公开数据等【无需登录或复杂交互】的场景。若用户提问的是「最新消息」「资料查找」「某事是什么」之类，则优先使用该工具。",
         parameters: {
           type: "object",
           properties: {
@@ -68,7 +68,7 @@ export interface ToolCall {
       type: "function",
       function: {
         name: "openmanus_web_automation",
-        description: "网页自动化操作，包括数据抓取、表单填写、页面交互等。适用于需要与网页进行复杂交互的任务",
+        description: "基于浏览器的自动化与爬取工具，可在目标网页上执行点击、输入、滚动、抓取结构化数据、下载文件、登录等复杂交互。用于【需要模拟用户操作或批量抓取/填报】的任务，而不仅仅是简单搜索。",
         parameters: {
           type: "object",
           properties: {
@@ -136,7 +136,7 @@ export interface ToolCall {
       type: "function",
       function: {
         name: "openmanus_general_task",
-        description: "通用的智能任务处理，适用于复杂的多步骤任务或需要AI智能决策的场景",
+        description: "OpenManus 通用代理，适合无法通过以上专用工具完成，或需要多步骤规划/决策/混合操作（代码+网页+文件）的复合型任务。",
         parameters: {
           type: "object",
           properties: {

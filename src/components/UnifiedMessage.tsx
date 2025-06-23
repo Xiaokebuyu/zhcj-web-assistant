@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect, memo } from 'react';
-import { ChevronDown, ChevronRight, MessageCircle, Mic, Search, Settings, Volume2, Copy, ThumbsUp, ThumbsDown } from 'lucide-react';
+import React, { useState, useRef, useEffect, memo, useCallback } from 'react';
+import { ChevronDown, ChevronRight, MessageCircle, Mic, Search, Settings, Volume2, Copy, ThumbsUp, ThumbsDown, RefreshCw } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -13,12 +13,17 @@ interface UnifiedMessageProps {
   message: ReasoningChatMessage;
   onToggleReasoning?: () => void;
   onPlayAudio?: (audioUrl: string) => void;
+  onRegenerateAudio?: (messageId: string, text: string) => void;
 }
+
+// 读取OpenManus后端地址（构建时注入），默认本地8001
+const OPENMANUS_BASE_URL = process.env.NEXT_PUBLIC_OPENMANUS_API_URL || 'http://127.0.0.1:8001';
 
 const UnifiedMessage: React.FC<UnifiedMessageProps> = memo(({
   message,
   onToggleReasoning,
-  onPlayAudio
+  onPlayAudio,
+  onRegenerateAudio
 }) => {
   const contentRef = useRef<HTMLDivElement>(null);
   const finalMessageRef = useRef<HTMLDivElement>(null);
@@ -31,6 +36,78 @@ const UnifiedMessage: React.FC<UnifiedMessageProps> = memo(({
   const lastContentLengthRef = useRef(0);
   const streamingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const updateDebounceRef = useRef<NodeJS.Timeout | null>(null);
+
+  /* ------------------------------------------------------------------
+   * OpenManus 日志流处理
+   * ------------------------------------------------------------------*/
+  const [taskLogs, setTaskLogs] = useState<{ [taskId: string]: string[] }>({});
+  const [logVisibility, setLogVisibility] = useState<{ [taskId: string]: boolean }>({});
+  const eventSourcesRef = useRef<{ [taskId: string]: EventSource }>({});
+
+  const startLogStream = useCallback((taskId: string) => {
+    // 避免重复创建
+    if (eventSourcesRef.current[taskId]) return;
+
+    const es = new EventSource(`${OPENMANUS_BASE_URL}/api/task_logs/${taskId}`);
+
+    es.onmessage = (e) => {
+      const line = e.data as string;
+      setTaskLogs((prev) => {
+        const existing = prev[taskId] || [];
+        return { ...prev, [taskId]: [...existing, line] };
+      });
+
+      // 收尾关闭
+      if (line.trim() === '[任务结束]') {
+        es.close();
+        delete eventSourcesRef.current[taskId];
+      }
+    };
+
+    es.onerror = () => {
+      es.close();
+      delete eventSourcesRef.current[taskId];
+    };
+
+    eventSourcesRef.current[taskId] = es;
+  }, []);
+
+  // 深度提取 task_id 的工具函数
+  const extractTaskIds = (data: any): string[] => {
+    const ids: string[] = [];
+    if (!data) return ids;
+    if (typeof data === 'string') {
+      try { data = JSON.parse(data); } catch { return ids; }
+    }
+    if (Array.isArray(data)) {
+      data.forEach(item => ids.push(...extractTaskIds(item)));
+    } else if (typeof data === 'object') {
+      if (data.task_id && typeof data.task_id === 'string') {
+        ids.push(data.task_id);
+      }
+      // 遍历所有属性
+      Object.values(data).forEach(v => ids.push(...extractTaskIds(v)));
+    }
+    return ids;
+  };
+
+  // 监测工具执行结果，若包含OpenManus task_id 则启动日志流
+  useEffect(() => {
+    if (message.toolExecution?.results) {
+      message.toolExecution.results.forEach((res: any) => {
+        let root: any = res;
+        if (res.content) root = res.content;
+        const ids = extractTaskIds(root);
+        ids.forEach(id => startLogStream(id));
+      });
+    }
+
+    // 清理函数：组件卸载时关闭所有 EventSource
+    return () => {
+      Object.values(eventSourcesRef.current).forEach((es) => es.close());
+      eventSourcesRef.current = {};
+    };
+  }, [message.toolExecution?.results, startLogStream]);
 
   // 直接显示内容，不做额外的流式处理
   useEffect(() => {
@@ -161,9 +238,28 @@ const UnifiedMessage: React.FC<UnifiedMessageProps> = memo(({
     );
   };
 
-  // 渲染工具执行
+  // 渲染工具执行（含OpenManus日志）
   const renderToolExecution = () => {
     if (!message.toolExecution) return null;
+
+    // 检测 OpenManus 任务
+    const openManusTasks = message.toolExecution.results
+      .map((r: any) => {
+        let obj: any;
+        if (r.result !== undefined) {
+          obj = r.result;
+        } else if (r.content) {
+          try { obj = JSON.parse(r.content); } catch { obj = null; }
+        }
+
+        // 如果是数组（executeOpenManusTools包装结果），取首个元素解析
+        if (Array.isArray(obj) && obj.length > 0) {
+          try { obj = JSON.parse(obj[0].content); } catch { obj = null; }
+        }
+
+        return obj && obj.task_id ? { taskId: obj.task_id, status: obj.status } : null;
+      })
+      .filter(Boolean) as Array<{ taskId: string; status: string }>;
 
     return (
       <div className="mb-4 bg-white border border-gray-200 rounded-lg overflow-hidden">
@@ -180,7 +276,7 @@ const UnifiedMessage: React.FC<UnifiedMessageProps> = memo(({
           </div>
         </div>
         
-        <div className="p-4">
+        <div className="p-4 space-y-4">
           {message.toolExecution.toolCalls.map((toolCall, index) => (
             <div key={toolCall.id} className="mb-3 last:mb-0">
               <div className="text-sm font-medium text-gray-700 mb-1">
@@ -191,6 +287,27 @@ const UnifiedMessage: React.FC<UnifiedMessageProps> = memo(({
               </div>
             </div>
           ))}
+
+          {/* OpenManus 任务日志显示 */}
+          {openManusTasks.map(({ taskId, status }) => {
+            const logs = taskLogs[taskId] || [];
+            const visible = logVisibility[taskId] ?? false;
+            const toggleVisibility = () => setLogVisibility(prev => ({ ...prev, [taskId]: !visible }));
+
+            return (
+              <div key={taskId} className="border-t border-gray-200 pt-3">
+                <div className="flex items-center justify-between cursor-pointer" onClick={toggleVisibility}>
+                  <span className="text-xs text-gray-600">OpenManus 任务 {taskId.slice(0,8)}… ({status || '运行中'})</span>
+                  <button className="text-blue-600 text-xs">{visible ? '隐藏日志' : '查看日志'}</button>
+                </div>
+                {visible && (
+                  <pre className="mt-2 max-h-52 overflow-y-auto text-xs bg-gray-50 p-2 rounded text-gray-700 whitespace-pre-wrap">
+                    {logs.length === 0 ? '等待日志...' : logs.join('\n')}
+                  </pre>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
     );
@@ -249,6 +366,17 @@ const UnifiedMessage: React.FC<UnifiedMessageProps> = memo(({
               className="mt-2 p-1.5 hover:bg-gray-100 rounded transition-colors"
             >
               <Volume2 size={14} className="text-gray-400" />
+            </button>
+          )}
+          
+          {/* 重新生成语音按钮 */}
+          {onRegenerateAudio && (
+            <button
+              onClick={() => onRegenerateAudio(message.id, message.content)}
+              className="mt-2 ml-1 p-1.5 hover:bg-gray-100 rounded transition-colors"
+              title="重新生成语音"
+            >
+              <RefreshCw size={14} className="text-gray-400" />
             </button>
           )}
           

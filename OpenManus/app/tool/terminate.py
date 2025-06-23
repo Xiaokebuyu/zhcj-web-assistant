@@ -15,11 +15,17 @@ class Terminate(BaseTool):
                 "type": "string",
                 "description": "The finish status of the interaction.",
                 "enum": ["success", "failure"],
-            }
+            },
+            "message": {
+                "type": "string",
+                "description": "Optional detail message for termination.",
+            },
         },
         "required": ["status"],
     }
 
-    async def execute(self, status: str) -> str:
-        """Finish the current execution"""
+    async def execute(self, status: str, message: str | None = None, **kwargs) -> str:  # type: ignore[override]
+        """Finish the current execution. Extra args are ignored for compatibility."""
+        if message:
+            return f"The interaction has been completed with status: {status}. Message: {message}"
         return f"The interaction has been completed with status: {status}"

@@ -222,12 +222,12 @@ export async function POST(request: NextRequest) {
       content: `你是一个有用的AI助手。你可以使用以下工具来帮助用户：
 
 可用工具：
-- get_weather: 查询天气信息
-- web_search: 搜索最新信息
-- openmanus_web_automation: 网页自动化
-- openmanus_code_execution: 代码执行
-- openmanus_file_operations: 文件操作
-- openmanus_general_task: 通用任务处理
+- get_weather: 城市天气查询（实时天气、空气质量、指数等）
+- web_search: 公共互联网关键词搜索，获取新闻、事实性资料、公开数据等，无需网页交互。
+- openmanus_web_automation: 浏览器自动化/网页抓取，支持登录、点击、滚动、批量抓取结构化数据等复杂交互。
+- openmanus_code_execution: Python 代码执行（数据分析、计算、可视化、文件处理等）
+- openmanus_file_operations: 文件读写/编辑/格式转换等本地或远程文件操作
+- openmanus_general_task: 通用智能代理，适合多步骤规划或需要同时使用多种工具的复杂任务。
 
 请根据用户的问题判断是否需要使用工具，并在你的推理过程中说明你的决策。如果需要使用工具，请调用相应的工具函数。
 
@@ -279,7 +279,7 @@ ${pageContext ? '\n\n' + PageContextProcessor.generateContextSystemMessage(pageC
                   type: "function", 
                   function: {
                     name: "web_search",
-                    description: "搜索最新信息",
+                    description: "公共互联网关键词搜索，获取新闻、事实性资料、公开数据等，无需网页交互。",
                     parameters: {
                       type: "object",
                       properties: {
@@ -288,8 +288,79 @@ ${pageContext ? '\n\n' + PageContextProcessor.generateContextSystemMessage(pageC
                       required: ["query"]
                     }
                   }
+                },
+                {
+                  type: "function",
+                  function: {
+                    name: "openmanus_web_automation",
+                    description: "浏览器自动化/网页抓取，支持登录、点击、滚动、批量抓取结构化数据等复杂交互。",
+                    parameters: {
+                      type: "object",
+                      properties: {
+                        task_description: { type: "string", description: "详细的任务描述，例如：抓取某网站的产品信息、自动填写表单、下载文件等" },
+                        url: { type: "string", description: "目标网页URL（可选）" }
+                      },
+                      required: ["task_description"]
+                    }
+                  }
+                },
+                {
+                  type: "function",
+                  function: {
+                    name: "openmanus_code_execution",
+                    description: "执行Python代码进行数据分析、计算、文件处理等",
+                    parameters: {
+                      type: "object",
+                      properties: {
+                        task_description: { type: "string", description: "详细的任务描述，例如：分析CSV数据、生成图表、数据处理、算法实现等" },
+                        code_type: {
+                          type: "string",
+                          description: "代码类型：data_analysis（数据分析）、file_processing（文件处理）、calculation（计算）、visualization（可视化）",
+                          enum: ["data_analysis", "file_processing", "calculation", "visualization"]
+                        }
+                      },
+                      required: ["task_description"]
+                    }
+                  }
+                },
+                {
+                  type: "function",
+                  function: {
+                    name: "openmanus_file_operations",
+                    description: "文件操作，包括文件读写、编辑、格式转换等",
+                    parameters: {
+                      type: "object",
+                      properties: {
+                        task_description: { type: "string", description: "详细的任务描述，例如：编辑配置文件、转换文件格式、批量重命名等" },
+                        operation_type: {
+                          type: "string",
+                          description: "操作类型：read（读取）、write（写入）、edit（编辑）、convert（转换）",
+                          enum: ["read", "write", "edit", "convert"]
+                        }
+                      },
+                      required: ["task_description"]
+                    }
+                  }
+                },
+                {
+                  type: "function",
+                  function: {
+                    name: "openmanus_general_task",
+                    description: "通用智能代理，适合多步骤规划或需要同时使用多种工具的复杂任务。",
+                    parameters: {
+                      type: "object",
+                      properties: {
+                        task_description: { type: "string", description: "详细的任务描述，OpenManus将自动分析并执行" },
+                        complexity: {
+                          type: "string",
+                          description: "任务复杂度：simple（简单）、medium（中等）、complex（复杂）",
+                          enum: ["simple", "medium", "complex"]
+                        }
+                      },
+                      required: ["task_description"]
+                    }
+                  }
                 }
-                // 可以添加更多工具定义
               ]
             }),
           });
@@ -442,7 +513,7 @@ ${pageContext ? '\n\n' + PageContextProcessor.generateContextSystemMessage(pageC
           // 如果有工具调用，执行工具
           if (currentStage === 'tool_execution' && toolCalls.length > 0) {
             // 过滤并验证工具调用
-            const validToolCalls = toolCalls.filter(toolCall => {
+            let validToolCalls = toolCalls.filter(toolCall => {
               // 检查基本结构
               if (!toolCall?.function?.name) {
                 console.warn('过滤掉无效的工具调用（缺少名称）:', toolCall);
@@ -457,6 +528,12 @@ ${pageContext ? '\n\n' + PageContextProcessor.generateContextSystemMessage(pageC
               
               return true;
             });
+
+            // 工具调用次数限制 – 最多5个
+            if (validToolCalls.length > 5) {
+              console.warn(`检测到 ${validToolCalls.length} 个工具调用，已截断到 5 个`);
+              validToolCalls = validToolCalls.slice(0, 5);
+            }
 
             if (validToolCalls.length === 0) {
               console.warn('没有有效的工具调用，跳过工具执行阶段');
@@ -537,6 +614,55 @@ ${pageContext ? '\n\n' + PageContextProcessor.generateContextSystemMessage(pageC
                 })}\n\n`));
               }
             }
+
+            // ----------------新增：如果存在 OpenManus 异步任务未完成，则暂停推理----------------
+            const pendingOpenManusTasks: string[] = [];
+            for (const tr of toolExecutionResults) {
+              try {
+                const parsed = JSON.parse(tr.content);
+                // 1) 顶层直接带 task_id（旧格式）
+                if (parsed && parsed.task_id && parsed.status && parsed.status !== 'completed') {
+                  pendingOpenManusTasks.push(parsed.task_id);
+                }
+                // 2) 嵌套在 result 数组里（executeOpenManusTools 返回格式）
+                else if (Array.isArray(parsed.result)) {
+                  for (const inner of parsed.result) {
+                    let innerObj: any = inner;
+                    if (typeof inner?.content === 'string') {
+                      try { innerObj = JSON.parse(inner.content); } catch {}
+                    }
+                    if (innerObj && innerObj.task_id && innerObj.status && innerObj.status !== 'completed') {
+                      pendingOpenManusTasks.push(innerObj.task_id);
+                    }
+                  }
+                }
+              } catch {
+                // ignore
+              }
+            }
+            if (pendingOpenManusTasks.length > 0) {
+              // 向客户端发送暂停信号，并附带未完成的 task_id 列表
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                type: 'pending_openmanus',
+                task_ids: pendingOpenManusTasks,
+                tool_calls: toolCalls,
+                tool_results: toolExecutionResults,
+                reasoning_content: reasoningContent,
+                final_content: finalContent,
+                messageId
+              })}\n\n`));
+
+              // 结束当前流。待前端监听任务完成后再重新触发下一轮推理。
+              setTimeout(() => {
+                try {
+                  controller.close();
+                } catch (e) {
+                  console.log('Controller already closed');
+                }
+              }, 100);
+              return;
+            }
+            // ----------------新增逻辑结束----------------
 
             // 第二阶段：工具结果整合和最终回复
             const finalResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
