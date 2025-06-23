@@ -20,7 +20,7 @@ import { StreamingSpeechRecognition } from '@/utils/streamingSpeechRecognition';
 import { toolDefinitions } from '@/utils/toolManager';
 import { VoiceCallMode } from './VoiceCall/VoiceCallMode';
 import { VoiceCallManager } from '@/utils/voiceCallManager';
-import { UnifiedMessage } from './UnifiedMessage';
+import UnifiedMessage from './UnifiedMessage';
 
 interface FloatingAssistantProps {
   config?: AssistantConfig;
@@ -89,16 +89,9 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   const [contextStatus, setContextStatus] = useState<ContextStatus>('disabled');
   const [lastContextUpdate, setLastContextUpdate] = useState<Date | null>(null);
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
-  
-  // 滚动相关状态
-  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
-  const lastScrollPositionRef = useRef(0);
-  const isUserScrollingRef = useRef(false);
-  const scrollDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   
   // 语音识别实例
   const sttInstance = useRef<StreamingSpeechRecognition | null>(null);
@@ -106,7 +99,138 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   
   // 语音通话管理器
   const voiceCallManager = useRef<VoiceCallManager | null>(null);
-
+  
+  // 流式内容更新防抖
+  const contentUpdateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingContentUpdateRef = useRef<{ messageId: string; content: string } | null>(null);
+  
+  // 累积流式内容的引用
+  const streamingContentRef = useRef<{ [messageId: string]: string }>({});
+  
+  // 累积思维链内容的引用
+  const reasoningContentRef = useRef<{ [messageId: string]: string }>({});
+  
+  // 自动滚动函数
+  const scrollToBottom = useCallback((smooth = true) => {
+    if (messagesContainerRef.current) {
+      const scrollOptions: ScrollIntoViewOptions = {
+        behavior: smooth ? 'smooth' : 'auto',
+        block: 'end',
+      };
+      messagesContainerRef.current.scrollTo({
+        top: messagesContainerRef.current.scrollHeight,
+        behavior: smooth ? 'smooth' : 'auto'
+      });
+    }
+  }, []);
+  
+  // 检查是否在底部附近
+  const isNearBottom = useCallback(() => {
+    if (!messagesContainerRef.current) return true;
+    const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
+    return scrollHeight - scrollTop - clientHeight < 100; // 100px的阈值
+  }, []);
+  
+  // 防抖的内容更新函数
+  const debouncedContentUpdate = useCallback((messageId: string, content: string) => {
+    // 清除之前的定时器
+    if (contentUpdateTimeoutRef.current) {
+      clearTimeout(contentUpdateTimeoutRef.current);
+    }
+    
+    // 保存待更新的内容
+    pendingContentUpdateRef.current = { messageId, content };
+    
+    // 设置防抖定时器（50ms）
+    contentUpdateTimeoutRef.current = setTimeout(() => {
+      if (pendingContentUpdateRef.current) {
+        const { messageId: id, content: pendingContent } = pendingContentUpdateRef.current;
+        setMessages(prev => prev.map(msg => 
+          msg.id === id 
+            ? { ...msg, content: pendingContent }
+            : msg
+        ));
+        pendingContentUpdateRef.current = null;
+        
+        // 流式更新后触发滚动
+        if (isNearBottom()) {
+          requestAnimationFrame(() => {
+            scrollToBottom(true);
+          });
+        }
+      }
+    }, 50); // 50ms 防抖延迟
+  }, [scrollToBottom, isNearBottom]);
+  
+  // 立即更新函数（用于最终确认）
+  const immediateContentUpdate = useCallback((messageId: string, content: string) => {
+    // 清除防抖定时器
+    if (contentUpdateTimeoutRef.current) {
+      clearTimeout(contentUpdateTimeoutRef.current);
+      contentUpdateTimeoutRef.current = null;
+    }
+    
+    // 立即更新
+    setMessages(prev => prev.map(msg => 
+      msg.id === messageId 
+        ? { ...msg, content }
+        : msg
+    ));
+    
+    // 清除待更新的内容
+    pendingContentUpdateRef.current = null;
+  }, []);
+  
+  // 防抖的思维链更新函数
+  const debouncedReasoningUpdate = useCallback((messageId: string, reasoningContent: string) => {
+    // 清除之前的定时器
+    if (contentUpdateTimeoutRef.current) {
+      clearTimeout(contentUpdateTimeoutRef.current);
+    }
+    
+    // 保存待更新的思维链内容
+    pendingContentUpdateRef.current = { messageId, content: reasoningContent };
+    
+    // 设置防抖定时器（50ms）
+    contentUpdateTimeoutRef.current = setTimeout(() => {
+      if (pendingContentUpdateRef.current) {
+        const { messageId: id, content: pendingContent } = pendingContentUpdateRef.current;
+        setMessages(prev => prev.map(msg => 
+          msg.id === id 
+            ? { ...msg, reasoningContent: pendingContent }
+            : msg
+        ));
+        pendingContentUpdateRef.current = null;
+        
+        // 思维链更新后触发滚动
+        if (isNearBottom()) {
+          requestAnimationFrame(() => {
+            scrollToBottom(true);
+          });
+        }
+      }
+    }, 50); // 50ms 防抖延迟
+  }, [scrollToBottom, isNearBottom]);
+  
+  // 立即思维链更新函数（用于最终确认）
+  const immediateReasoningUpdate = useCallback((messageId: string, reasoningContent: string) => {
+    // 清除防抖定时器
+    if (contentUpdateTimeoutRef.current) {
+      clearTimeout(contentUpdateTimeoutRef.current);
+      contentUpdateTimeoutRef.current = null;
+    }
+    
+    // 立即更新
+    setMessages(prev => prev.map(msg => 
+      msg.id === messageId 
+        ? { ...msg, reasoningContent }
+        : msg
+    ));
+    
+    // 清除待更新的内容
+    pendingContentUpdateRef.current = null;
+  }, []);
+  
   const {
     position = 'bottom-right',
     enableVoice = true,
@@ -116,54 +240,6 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   // 获取位置样式的函数
   const getPositionStyles = useCallback(() => {
     return 'fixed bottom-6 right-6';
-  }, []);
-  
-  // 智能滚动函数
-  const scrollToBottom = useCallback((force = false) => {
-    if (!messagesContainerRef.current) return;
-
-    const container = messagesContainerRef.current;
-    const scrollTop = container.scrollTop;
-    const scrollHeight = container.scrollHeight;
-    const clientHeight = container.clientHeight;
-    
-    // 检查用户是否在底部附近（阈值100px）
-    const isNearBottom = scrollHeight - scrollTop - clientHeight < 100;
-    
-    // 只有在以下情况下才滚动：
-    // 1. 强制滚动（force = true）
-    // 2. 用户已经在底部附近
-    // 3. 不是用户主动滚动
-    if (force || (isNearBottom && !isUserScrollingRef.current)) {
-      container.scrollTo({
-        top: scrollHeight,
-        behavior: 'smooth'
-      });
-    }
-  }, []);
-
-  // 监听滚动事件，判断用户是否主动滚动
-  const handleScroll = useCallback(() => {
-    if (!messagesContainerRef.current) return;
-
-    const container = messagesContainerRef.current;
-    const scrollTop = container.scrollTop;
-    const scrollHeight = container.scrollHeight;
-    const clientHeight = container.clientHeight;
-    
-    // 判断是否在底部
-    const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
-    
-    // 判断是否是用户主动滚动（向上）
-    if (scrollTop < lastScrollPositionRef.current && !isAtBottom) {
-      isUserScrollingRef.current = true;
-      setShowScrollToBottom(true);
-    } else if (isAtBottom) {
-      isUserScrollingRef.current = false;
-      setShowScrollToBottom(false);
-    }
-    
-    lastScrollPositionRef.current = scrollTop;
   }, []);
   
   // 豆包语音配置
@@ -488,11 +564,6 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     }
   }, []);
 
-  // 自动滚动到最新消息
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
   // 监听来自父页面的消息（页面上下文）
   useEffect(() => {
     if (!enablePageContext) return;
@@ -783,7 +854,46 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
 
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          // 处理缓冲区中剩余的数据
+          if (buffer.trim()) {
+            const remainingLines = buffer.split('\n');
+            for (const line of remainingLines) {
+              if (line.startsWith('data: ')) {
+                const data = line.slice(6);
+                if (data !== '[DONE]') {
+                  try {
+                    const parsed: UnifiedChatResponse = JSON.parse(data);
+                    // 处理剩余的数据...
+                    if (parsed.type === 'final_content' && !currentFinalMessage) {
+                      currentFinalMessage = {
+                        id: `final-${parsed.messageId || Date.now()}`,
+                        role: 'assistant',
+                        content: parsed.content || '',
+                        timestamp: new Date(),
+                        messageType: 'assistant_final'
+                      };
+                      setMessages(prev => [...prev, currentFinalMessage!]);
+                    } else if (parsed.type === 'final_content' && currentFinalMessage && parsed.content) {
+                      // 追加内容
+                      setMessages(prev => prev.map(msg => 
+                        msg.id === currentFinalMessage!.id 
+                          ? { 
+                              ...msg, 
+                              content: msg.content + parsed.content
+                            }
+                          : msg
+                      ));
+                    }
+                  } catch (e) {
+                    console.error('解析剩余数据错误:', e, line);
+                  }
+                }
+              }
+            }
+          }
+          break;
+        }
 
         // 将新数据添加到缓冲区
         buffer += new TextDecoder().decode(value);
@@ -801,9 +911,9 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
               const parsed: UnifiedChatResponse = JSON.parse(data);
 
               if (parsed.type === 'reasoning') {
-                // 思维链处理 - 区分阶段
+                // 思维链处理 - 使用防抖机制减少渲染频率
                 if (parsed.phase === 'post_tool') {
-                  // 工具执行后的思维链 - 创建新的思维链消息
+                  // 工具执行后的思维链
                   if (!currentPostToolReasoningMessage) {
                     currentPostToolReasoningMessage = {
                       id: `post-reasoning-${parsed.messageId}`,
@@ -816,19 +926,20 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                     };
                     setMessages(prev => [...prev, currentPostToolReasoningMessage!]);
                     postToolReasoningStartTime = Date.now();
+                    // 初始化累积思维链内容
+                    reasoningContentRef.current[currentPostToolReasoningMessage.id] = parsed.content || '';
                   } else {
-                    // 更新现有的工具执行后思维链消息
-                    setMessages(prev => prev.map(msg => 
-                      msg.id === currentPostToolReasoningMessage!.id 
-                        ? { 
-                            ...msg, 
-                            reasoningContent: parsed.full_reasoning || (msg.reasoningContent + (parsed.content || ''))
-                          }
-                        : msg
-                    ));
+                    // 累积思维链内容，使用防抖更新
+                    const messageId = currentPostToolReasoningMessage.id;
+                    reasoningContentRef.current[messageId] = 
+                      parsed.full_reasoning || 
+                      (reasoningContentRef.current[messageId] || '') + (parsed.content || '');
+                    
+                    // 使用防抖更新UI
+                    debouncedReasoningUpdate(messageId, reasoningContentRef.current[messageId]);
                   }
                 } else {
-                  // 第一阶段思维链处理（保持不变）
+                  // 第一阶段思维链处理
                   if (!currentReasoningMessage) {
                     currentReasoningMessage = {
                       id: `reasoning-${parsed.messageId}`,
@@ -841,33 +952,42 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                     };
                     setMessages(prev => [...prev, currentReasoningMessage!]);
                     reasoningStartTime = Date.now();
+                    // 初始化累积思维链内容
+                    reasoningContentRef.current[currentReasoningMessage.id] = parsed.content || '';
                   } else {
-                    // 更新现有思维链消息
-                    setMessages(prev => prev.map(msg => 
-                      msg.id === currentReasoningMessage!.id 
-                        ? { 
-                            ...msg, 
-                            reasoningContent: parsed.full_reasoning || (msg.reasoningContent + (parsed.content || ''))
-                          }
-                        : msg
-                    ));
+                    // 累积思维链内容，使用防抖更新
+                    const messageId = currentReasoningMessage.id;
+                    reasoningContentRef.current[messageId] = 
+                      parsed.full_reasoning || 
+                      (reasoningContentRef.current[messageId] || '') + (parsed.content || '');
+                    
+                    // 使用防抖更新UI
+                    debouncedReasoningUpdate(messageId, reasoningContentRef.current[messageId]);
                   }
                 }
 
               } else if (parsed.type === 'tool_decision') {
                 // 完成思维链，开始工具执行
                 if (currentReasoningMessage) {
+                  const messageId = currentReasoningMessage.id;
+                  const finalReasoningContent = reasoningContentRef.current[messageId];
                   const duration = Math.round((Date.now() - reasoningStartTime) / 1000);
+                  
+                  // 立即更新思维链的最终状态
                   setMessages(prev => prev.map(msg => 
-                    msg.id === currentReasoningMessage!.id 
+                    msg.id === messageId 
                       ? { 
                           ...msg, 
+                          reasoningContent: finalReasoningContent || msg.reasoningContent,
                           isReasoningComplete: true, 
                           reasoningDuration: duration,
                           isCollapsed: true 
                         }
                       : msg
                   ));
+                  
+                  // 清理累积内容
+                  delete reasoningContentRef.current[messageId];
                 }
 
                 // 创建工具执行消息
@@ -904,7 +1024,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                 }
 
               } else if (parsed.type === 'final_content') {
-                // 处理流式最终回复 - 真正的流式更新
+                // 处理流式最终回复 - 使用防抖机制减少渲染频率
                 if (!currentFinalMessage) {
                   currentFinalMessage = {
                     id: `final-${parsed.messageId}`,
@@ -914,21 +1034,32 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                     messageType: 'assistant_final'
                   };
                   setMessages(prev => [...prev, currentFinalMessage!]);
+                  // 初始化累积内容
+                  streamingContentRef.current[currentFinalMessage.id] = '';
                 }
                 
-                // 增量更新内容，而不是替换
-                if (parsed.content) {
-                  setMessages(prev => prev.map(msg => 
-                    msg.id === currentFinalMessage!.id 
-                      ? { 
-                          ...msg, 
-                          content: msg.content + parsed.content // 增量追加
-                        }
-                      : msg
-                  ));
+                // 增量累积内容，使用防抖更新
+                if (parsed.content && currentFinalMessage) {
+                  const messageId = currentFinalMessage.id;
+                  streamingContentRef.current[messageId] = 
+                    (streamingContentRef.current[messageId] || '') + parsed.content;
+                  
+                  // 使用防抖更新UI
+                  debouncedContentUpdate(messageId, streamingContentRef.current[messageId]);
                 }
 
               } else if (parsed.type === 'done') {
+                // 确保流式内容最终更新
+                if (currentFinalMessage) {
+                  const messageId = currentFinalMessage.id;
+                  const finalContent = streamingContentRef.current[messageId];
+                  if (finalContent) {
+                    immediateContentUpdate(messageId, finalContent);
+                    // 清理累积内容
+                    delete streamingContentRef.current[messageId];
+                  }
+                }
+
                 // 完成所有处理
                 if (currentToolMessage) {
                   setMessages(prev => prev.map(msg => 
@@ -947,24 +1078,31 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
 
                 // 完成工具执行后思维链
                 if (currentPostToolReasoningMessage) {
+                  const messageId = currentPostToolReasoningMessage.id;
+                  const finalReasoningContent = reasoningContentRef.current[messageId];
                   const duration = Math.round((Date.now() - postToolReasoningStartTime) / 1000);
+                  
                   setMessages(prev => prev.map(msg => 
-                    msg.id === currentPostToolReasoningMessage!.id 
+                    msg.id === messageId 
                       ? { 
                           ...msg, 
+                          reasoningContent: finalReasoningContent || msg.reasoningContent,
                           isReasoningComplete: true,
                           reasoningDuration: duration,
                           isCollapsed: true
                         }
                       : msg
                   ));
+                  
+                  // 清理累积内容
+                  delete reasoningContentRef.current[messageId];
                 }
 
-                // 处理无工具调用时的最终回复
+                // 处理无工具调用时的最终回复 - 重要修复
                 if (!currentFinalMessage && parsed.final_content) {
                   // 创建最终回复消息
                   currentFinalMessage = {
-                    id: `final-${parsed.messageId}`,
+                    id: `final-${parsed.messageId || Date.now()}`,
                     role: 'assistant',
                     content: parsed.final_content,
                     timestamp: new Date(),
@@ -977,14 +1115,18 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                 if (currentFinalMessage && enableVoice && voiceSettings.autoPlay) {
                   const finalContent = currentFinalMessage.content;
                   if (finalContent) {
-                    const audioUrl = await generateSpeech(finalContent);
-                    if (audioUrl) {
-                      setMessages(prev => prev.map(msg => 
-                        msg.id === currentFinalMessage!.id 
-                          ? { ...msg, audioUrl }
-                          : msg
-                      ));
-                      setTimeout(() => playAudio(audioUrl), 500);
+                    try {
+                      const audioUrl = await generateSpeech(finalContent);
+                      if (audioUrl) {
+                        setMessages(prev => prev.map(msg => 
+                          msg.id === currentFinalMessage!.id 
+                            ? { ...msg, audioUrl }
+                            : msg
+                        ));
+                        setTimeout(() => playAudio(audioUrl), 500);
+                      }
+                    } catch (error) {
+                      console.error('生成语音失败:', error);
                     }
                   }
                 }
@@ -998,17 +1140,52 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
 
     } catch (error) {
       console.error('发送消息失败:', error);
-      setMessages(prev => [...prev, {
-        id: Date.now().toString(),
-        role: 'assistant',
-        content: '抱歉，我遇到了一些问题。请稍后再试。',
-        timestamp: new Date(),
-        messageType: 'assistant_final'
-      }]);
+      
+      // 检查是否有任何部分完成的消息
+      const hasAnyResponse = messages.some(msg => 
+        msg.timestamp > userMessage.timestamp && msg.role === 'assistant'
+      );
+      
+      if (!hasAnyResponse) {
+        // 如果完全没有响应，添加错误消息
+        setMessages(prev => [...prev, {
+          id: Date.now().toString(),
+          role: 'assistant',
+          content: '抱歉，我遇到了一些问题。请稍后再试。',
+          timestamp: new Date(),
+          messageType: 'assistant_final'
+        }]);
+      } else {
+        // 如果有部分响应但没有最终消息，尝试创建一个
+        const hasReasoningOnly = messages.some(msg => 
+          msg.timestamp > userMessage.timestamp && 
+          msg.messageType === 'reasoning' &&
+          !messages.some(m => m.messageType === 'assistant_final' && m.timestamp > userMessage.timestamp)
+        );
+        
+        if (hasReasoningOnly) {
+          // 添加一个说明消息
+          setMessages(prev => [...prev, {
+            id: Date.now().toString(),
+            role: 'assistant',
+            content: '抱歉，我的回复被中断了。让我重新组织一下思路...',
+            timestamp: new Date(),
+            messageType: 'assistant_final'
+          }]);
+        }
+      }
     } finally {
       setIsLoading(false);
+      
+      // 清理所有定时器
+      if (transcriptTimeoutRef.current) {
+        clearTimeout(transcriptTimeoutRef.current);
+      }
+      if (contentUpdateTimeoutRef.current) {
+        clearTimeout(contentUpdateTimeoutRef.current);
+      }
     }
-  }, [messages, pageContext, isLoading, enableVoice, voiceSettings.autoPlay, generateSpeech, playAudio]);
+  }, [messages, pageContext, isLoading, enableVoice, voiceSettings.autoPlay, generateSpeech, playAudio, debouncedContentUpdate, immediateContentUpdate, debouncedReasoningUpdate, immediateReasoningUpdate]);
 
   // 处理STT事件
   const handleSTTEvent = useCallback((event: StreamingSTTEvent) => {
@@ -1127,55 +1304,6 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     }
       }, [sendMessage, onError, stopListening]);
 
-  // 智能滚动到底部 - 根据消息类型决定
-  useEffect(() => {
-    if (!messages.length) return;
-
-    const lastMessage = messages[messages.length - 1];
-    
-    // 清除之前的防抖定时器
-    if (scrollDebounceTimerRef.current) {
-      clearTimeout(scrollDebounceTimerRef.current);
-    }
-
-    // 使用防抖避免频繁滚动
-    scrollDebounceTimerRef.current = setTimeout(() => {
-      // 根据消息类型决定是否滚动
-      switch (lastMessage.messageType) {
-        case 'user':
-          // 用户消息总是滚动到底部
-          scrollToBottom(true);
-          break;
-          
-        case 'assistant_final':
-          // 助手最终回复，如果用户在底部附近则滚动
-          scrollToBottom();
-          break;
-          
-        case 'reasoning':
-          // 思维链消息，只在刚创建时滚动
-          if (!lastMessage.isReasoningComplete && !lastMessage.reasoningContent) {
-            scrollToBottom();
-          }
-          break;
-          
-        case 'tool_execution':
-          // 工具执行消息，只在开始时滚动
-          if (lastMessage.toolExecution?.status === 'executing' && 
-              lastMessage.toolExecution.results.length === 0) {
-            scrollToBottom();
-          }
-          break;
-      }
-    }, 100); // 100ms 防抖延迟
-
-    return () => {
-      if (scrollDebounceTimerRef.current) {
-        clearTimeout(scrollDebounceTimerRef.current);
-      }
-    };
-  }, [messages, scrollToBottom]);
-
   // 初始化语音识别
   useEffect(() => {
     if (enableVoice && !sttInstance.current) {
@@ -1201,8 +1329,33 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
       if (transcriptTimeoutRef.current) {
         clearTimeout(transcriptTimeoutRef.current);
       }
+      
+      // 清理内容更新超时
+      if (contentUpdateTimeoutRef.current) {
+        clearTimeout(contentUpdateTimeoutRef.current);
+      }
     };
-  }, [enableVoice, handleSTTEvent, sttConfig]);
+  }, [enableVoice, sttConfig, handleSTTEvent]);
+  
+  // 监听消息变化，自动滚动到底部
+  useEffect(() => {
+    // 只有当用户在底部附近时才自动滚动
+    if (isNearBottom()) {
+      // 使用 requestAnimationFrame 确保在 DOM 更新后滚动
+      requestAnimationFrame(() => {
+        scrollToBottom(true);
+      });
+    }
+  }, [messages, scrollToBottom, isNearBottom]);
+  
+  // 当加载状态变化时也触发滚动
+  useEffect(() => {
+    if (isLoading && isNearBottom()) {
+      requestAnimationFrame(() => {
+        scrollToBottom(true);
+      });
+    }
+  }, [isLoading, scrollToBottom, isNearBottom]);
 
   // 开始流式语音识别
   const startListening = useCallback(async () => {
@@ -1422,19 +1575,20 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
 
   // 对话视图组件
   const ChatView = () => (
-    <div className="flex-1 relative">
+    <div 
+      className="flex-1 overflow-y-auto p-6"
+      ref={messagesContainerRef}
+      onWheel={(e) => e.stopPropagation()} // 确保滚轮事件不被阻止
+      onTouchStart={(e) => e.stopPropagation()} // 确保触摸滚动不被阻止
+      onTouchMove={(e) => e.stopPropagation()} // 确保触摸滚动不被阻止
+    >
       {/* 页面上下文状态 */}
       {renderContextStatus()}
       
       {/* 实时转录显示区域 */}
       {renderTranscriptDisplay()}
 
-      {/* 消息列表容器 */}
-      <div
-        ref={messagesContainerRef}
-        onScroll={handleScroll}
-        className="flex-1 overflow-y-auto p-6 space-y-4 relative"
-      >
+      <div className="space-y-4">
         {messages.length === 0 ? (
           <div className="text-center py-8">
             <div className="w-16 h-16 bg-gradient-to-r from-orange-100 to-amber-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
@@ -1475,33 +1629,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
             </div>
           </div>
         )}
-        
-        <div ref={messagesEndRef} />
       </div>
-
-      {/* 回到底部按钮 */}
-      {showScrollToBottom && (
-        <button
-          onClick={() => {
-            scrollToBottom(true);
-            isUserScrollingRef.current = false;
-          }}
-          className="absolute bottom-20 right-4 bg-white border border-gray-200 rounded-full p-2 shadow-lg hover:shadow-xl transition-all duration-200"
-          aria-label="回到底部"
-        >
-          <svg 
-            className="w-5 h-5 text-gray-600" 
-            fill="none" 
-            strokeLinecap="round" 
-            strokeLinejoin="round" 
-            strokeWidth="2" 
-            viewBox="0 0 24 24" 
-            stroke="currentColor"
-          >
-            <path d="M19 14l-7 7m0 0l-7-7m7 7V3"></path>
-          </svg>
-        </button>
-      )}
     </div>
   );
 
@@ -1602,7 +1730,10 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
           />
           
           {/* 对话窗口 */}
-          <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-2xl h-[700px] flex flex-col overflow-hidden">
+          <div 
+            className="relative bg-white rounded-2xl shadow-xl w-full max-w-2xl h-[700px] flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()} // 防止点击对话框时关闭
+          >
             {/* 顶部栏 */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
               <h1 className="text-lg font-normal text-gray-900">Ask AI</h1>

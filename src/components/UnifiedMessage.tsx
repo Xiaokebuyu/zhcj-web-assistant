@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, memo } from 'react';
 import { ChevronDown, ChevronRight, MessageCircle, Mic, Search, Settings, Volume2, Copy, ThumbsUp, ThumbsDown } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -15,7 +15,7 @@ interface UnifiedMessageProps {
   onPlayAudio?: (audioUrl: string) => void;
 }
 
-export const UnifiedMessage: React.FC<UnifiedMessageProps> = ({
+const UnifiedMessage: React.FC<UnifiedMessageProps> = memo(({
   message,
   onToggleReasoning,
   onPlayAudio
@@ -30,78 +30,22 @@ export const UnifiedMessage: React.FC<UnifiedMessageProps> = ({
   // 追踪上次处理的内容长度
   const lastContentLengthRef = useRef(0);
   const streamingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const updateDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
-  // 自动滚动思维链内容
+  // 直接显示内容，不做额外的流式处理
   useEffect(() => {
-    if (contentRef.current && message.messageType === 'reasoning' && !message.isReasoningComplete) {
-      contentRef.current.scrollTop = contentRef.current.scrollHeight;
-    }
-  }, [message.reasoningContent, message.messageType, message.isReasoningComplete]);
-
-  // 真正的流式显示效果
-  useEffect(() => {
-    if (message.messageType === 'assistant_final') {
-      const currentContent = message.content || '';
-      const currentLength = currentContent.length;
-      const lastLength = lastContentLengthRef.current;
-
-      // 检测是否有新内容
-      if (currentLength > lastLength) {
-        setIsStreaming(true);
-        
-        // 获取新增的内容
-        const newContent = currentContent.slice(lastLength);
-        let charIndex = 0;
-
-        // 清除之前的定时器
-        if (streamingTimerRef.current) {
-          clearInterval(streamingTimerRef.current);
-        }
-
-        // 逐字符添加新内容
-        streamingTimerRef.current = setInterval(() => {
-          if (charIndex < newContent.length) {
-            setDisplayedContent(prev => prev + newContent[charIndex]);
-            charIndex++;
-            
-            // 自动滚动到最新内容
-            if (finalMessageRef.current) {
-              const element = finalMessageRef.current;
-              const isNearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 100;
-              if (isNearBottom) {
-                element.scrollTop = element.scrollHeight;
-              }
-            }
-          } else {
-            // 新内容显示完毕
-            if (streamingTimerRef.current) {
-              clearInterval(streamingTimerRef.current);
-              streamingTimerRef.current = null;
-            }
-            setIsStreaming(false);
-            lastContentLengthRef.current = currentLength;
-          }
-        }, 20); // 每20ms显示一个字符
-
-        // 更新最后处理的长度
-        lastContentLengthRef.current = currentLength;
-      } else if (currentLength === 0 && lastLength > 0) {
-        // 内容被清空，重置状态
-        setDisplayedContent('');
-        lastContentLengthRef.current = 0;
-        setIsStreaming(false);
-      }
-    } else {
-      // 对于非最终回复，直接显示内容
-      setDisplayedContent(message.content || '');
-      setIsStreaming(false);
-      lastContentLengthRef.current = (message.content || '').length;
-    }
+    // 直接显示完整内容，因为真正的流式处理在FloatingAssistant中已经完成
+    setDisplayedContent(message.content || '');
+    setIsStreaming(false);
+    lastContentLengthRef.current = (message.content || '').length;
 
     // 清理函数
     return () => {
       if (streamingTimerRef.current) {
         clearInterval(streamingTimerRef.current);
+      }
+      if (updateDebounceRef.current) {
+        clearTimeout(updateDebounceRef.current);
       }
     };
   }, [message.content, message.messageType]);
@@ -361,7 +305,7 @@ export const UnifiedMessage: React.FC<UnifiedMessageProps> = ({
       )}
     </div>
   );
-};
+});
 
 // 工具名称显示映射
 function getToolDisplayName(toolName: string): string {
@@ -374,4 +318,6 @@ function getToolDisplayName(toolName: string): string {
     'openmanus_general_task': '通用任务'
   };
   return toolNames[toolName] || toolName;
-} 
+}
+
+export default UnifiedMessage; 

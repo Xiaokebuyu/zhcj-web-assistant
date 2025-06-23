@@ -330,25 +330,22 @@ ${pageContext ? '\n\n' + PageContextProcessor.generateContextSystemMessage(pageC
                     
                     currentStage = 'tool_execution';
                   } else {
-                    // 无工具调用，但需要发送最终内容
-                    if (finalContent) {
-                      // 先发送 final_content 消息
-                      controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-                        type: 'final_content',
-                        content: finalContent,
-                        full_content: finalContent,
-                        messageId
-                      })}\n\n`));
-                    }
-                    
-                    // 然后发送完成信号
+                    // 无工具调用，发送完成信号
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({
                       type: 'done',
                       reasoning_content: reasoningContent,
                       final_content: finalContent,
                       messageId
                     })}\n\n`));
-                    controller.close();
+                    
+                    // 使用 setTimeout 延迟关闭，确保所有数据都已发送
+                    setTimeout(() => {
+                      try {
+                        controller.close();
+                      } catch (e) {
+                        console.log('Controller already closed');
+                      }
+                    }, 100);
                     return;
                   }
                   break;
@@ -367,8 +364,15 @@ ${pageContext ? '\n\n' + PageContextProcessor.generateContextSystemMessage(pageC
                       messageId
                     })}\n\n`));
                   } else if (delta?.content) {
-                    // 收集最终内容，但先不发送
+                    // 收集最终内容
                     finalContent += delta.content;
+                    // 立即流式发送内容
+                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                      type: 'final_content',
+                      content: delta.content,
+                      full_content: finalContent,
+                      messageId
+                    })}\n\n`));
                   } else if (delta?.tool_calls) {
                     // 收集工具调用 - 处理流式分片数据
                     delta.tool_calls.forEach((toolCall: any) => {
@@ -584,17 +588,6 @@ ${pageContext ? '\n\n' + PageContextProcessor.generateContextSystemMessage(pageC
                 if (line.startsWith('data: ')) {
                   const data = line.slice(6);
                   if (data === '[DONE]') {
-                    // 确保发送最终内容
-                    if (finalFinalContent && finalFinalContent !== '') {
-                      // 发送完整的最终内容
-                      controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-                        type: 'final_content',
-                        content: finalFinalContent,
-                        full_content: finalFinalContent,
-                        messageId
-                      })}\n\n`));
-                    }
-                    
                     // 全部完成
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({
                       type: 'done',
@@ -605,7 +598,14 @@ ${pageContext ? '\n\n' + PageContextProcessor.generateContextSystemMessage(pageC
                       tool_results: toolExecutionResults,
                       messageId
                     })}\n\n`));
-                    controller.close();
+                    // 使用 setTimeout 延迟关闭，确保所有数据都已发送
+                    setTimeout(() => {
+                      try {
+                        controller.close();
+                      } catch (e) {
+                        console.log('Controller already closed');
+                      }
+                    }, 100);
                     return;
                   }
 
@@ -641,13 +641,24 @@ ${pageContext ? '\n\n' + PageContextProcessor.generateContextSystemMessage(pageC
 
         } catch (error) {
           console.error('流式处理错误:', error);
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-            type: 'error',
-            error: error instanceof Error ? error.message : '未知错误',
-            messageId
-          })}\n\n`));
-        } finally {
-          controller.close();
+          try {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+              type: 'error',
+              error: error instanceof Error ? error.message : '处理失败',
+              messageId
+            })}\n\n`));
+          } catch (e) {
+            console.error('发送错误消息失败:', e);
+          }
+          
+          // 安全关闭 controller
+          setTimeout(() => {
+            try {
+              controller.close();
+            } catch (e) {
+              console.log('Controller already closed');
+            }
+          }, 100);
         }
       }
     });
