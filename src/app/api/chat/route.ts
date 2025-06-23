@@ -330,7 +330,18 @@ ${pageContext ? '\n\n' + PageContextProcessor.generateContextSystemMessage(pageC
                     
                     currentStage = 'tool_execution';
                   } else {
-                    // 无工具调用，直接完成
+                    // 无工具调用，但需要发送最终内容
+                    if (finalContent) {
+                      // 先发送 final_content 消息
+                      controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                        type: 'final_content',
+                        content: finalContent,
+                        full_content: finalContent,
+                        messageId
+                      })}\n\n`));
+                    }
+                    
+                    // 然后发送完成信号
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({
                       type: 'done',
                       reasoning_content: reasoningContent,
@@ -356,6 +367,7 @@ ${pageContext ? '\n\n' + PageContextProcessor.generateContextSystemMessage(pageC
                       messageId
                     })}\n\n`));
                   } else if (delta?.content) {
+                    // 收集最终内容，但先不发送
                     finalContent += delta.content;
                   } else if (delta?.tool_calls) {
                     // 收集工具调用 - 处理流式分片数据
@@ -572,6 +584,17 @@ ${pageContext ? '\n\n' + PageContextProcessor.generateContextSystemMessage(pageC
                 if (line.startsWith('data: ')) {
                   const data = line.slice(6);
                   if (data === '[DONE]') {
+                    // 确保发送最终内容
+                    if (finalFinalContent && finalFinalContent !== '') {
+                      // 发送完整的最终内容
+                      controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                        type: 'final_content',
+                        content: finalFinalContent,
+                        full_content: finalFinalContent,
+                        messageId
+                      })}\n\n`));
+                    }
+                    
                     // 全部完成
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({
                       type: 'done',

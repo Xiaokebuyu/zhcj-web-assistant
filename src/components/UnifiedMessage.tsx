@@ -23,9 +23,13 @@ export const UnifiedMessage: React.FC<UnifiedMessageProps> = ({
   const contentRef = useRef<HTMLDivElement>(null);
   const finalMessageRef = useRef<HTMLDivElement>(null);
 
-  // 流式打字机效果状态
+  // 流式显示状态
   const [displayedContent, setDisplayedContent] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
+  
+  // 追踪上次处理的内容长度
+  const lastContentLengthRef = useRef(0);
+  const streamingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // 自动滚动思维链内容
   useEffect(() => {
@@ -34,36 +38,72 @@ export const UnifiedMessage: React.FC<UnifiedMessageProps> = ({
     }
   }, [message.reasoningContent, message.messageType, message.isReasoningComplete]);
 
-  // 流式打字机效果
+  // 真正的流式显示效果
   useEffect(() => {
-    if (message.messageType === 'assistant_final' && message.content !== displayedContent) {
-      setIsTyping(true);
-      setDisplayedContent('');
-      
-      let index = 0;
-      const content = message.content;
-      
-      const timer = setInterval(() => {
-        if (index < content.length) {
-          setDisplayedContent(prev => prev + content[index]);
-          index++;
-          
-          // 自动滚动到底部
-          if (finalMessageRef.current) {
-            finalMessageRef.current.scrollTop = finalMessageRef.current.scrollHeight;
-          }
-        } else {
-          setIsTyping(false);
-          clearInterval(timer);
+    if (message.messageType === 'assistant_final') {
+      const currentContent = message.content || '';
+      const currentLength = currentContent.length;
+      const lastLength = lastContentLengthRef.current;
+
+      // 检测是否有新内容
+      if (currentLength > lastLength) {
+        setIsStreaming(true);
+        
+        // 获取新增的内容
+        const newContent = currentContent.slice(lastLength);
+        let charIndex = 0;
+
+        // 清除之前的定时器
+        if (streamingTimerRef.current) {
+          clearInterval(streamingTimerRef.current);
         }
-      }, 20); // 每20ms添加一个字符
-      
-      return () => clearInterval(timer);
-    } else if (message.messageType !== 'assistant_final') {
+
+        // 逐字符添加新内容
+        streamingTimerRef.current = setInterval(() => {
+          if (charIndex < newContent.length) {
+            setDisplayedContent(prev => prev + newContent[charIndex]);
+            charIndex++;
+            
+            // 自动滚动到最新内容
+            if (finalMessageRef.current) {
+              const element = finalMessageRef.current;
+              const isNearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 100;
+              if (isNearBottom) {
+                element.scrollTop = element.scrollHeight;
+              }
+            }
+          } else {
+            // 新内容显示完毕
+            if (streamingTimerRef.current) {
+              clearInterval(streamingTimerRef.current);
+              streamingTimerRef.current = null;
+            }
+            setIsStreaming(false);
+            lastContentLengthRef.current = currentLength;
+          }
+        }, 20); // 每20ms显示一个字符
+
+        // 更新最后处理的长度
+        lastContentLengthRef.current = currentLength;
+      } else if (currentLength === 0 && lastLength > 0) {
+        // 内容被清空，重置状态
+        setDisplayedContent('');
+        lastContentLengthRef.current = 0;
+        setIsStreaming(false);
+      }
+    } else {
       // 对于非最终回复，直接显示内容
-      setDisplayedContent(message.content);
-      setIsTyping(false);
+      setDisplayedContent(message.content || '');
+      setIsStreaming(false);
+      lastContentLengthRef.current = (message.content || '').length;
     }
+
+    // 清理函数
+    return () => {
+      if (streamingTimerRef.current) {
+        clearInterval(streamingTimerRef.current);
+      }
+    };
   }, [message.content, message.messageType]);
 
   // Markdown渲染组件
@@ -234,11 +274,11 @@ export const UnifiedMessage: React.FC<UnifiedMessageProps> = ({
         {/* 消息内容 */}
         <div className="flex-1" ref={message.messageType === 'assistant_final' ? finalMessageRef : undefined}>
           {message.role === 'assistant' && message.messageType === 'assistant_final' ? (
-            <div className="text-gray-900">
-              <MarkdownRenderer content={displayedContent} />
-              {isTyping && (
-                <span className="inline-block w-2 h-4 bg-gray-500 ml-1 animate-pulse"></span>
-              )}
+                    <div className="text-gray-900">
+          <MarkdownRenderer content={displayedContent} />
+          {isStreaming && (
+            <span className="inline-block w-2 h-4 bg-gray-500 ml-1 animate-pulse"></span>
+          )}
               {/* 语音标识 */}
               {message.isVoice && (
                 <span className="ml-2 inline-flex items-center">
