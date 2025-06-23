@@ -1,6 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ChevronDown, ChevronRight, MessageCircle, Mic, Search, Settings, Volume2, Copy, ThumbsUp, ThumbsDown } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeHighlight from 'rehype-highlight';
+import rehypeRaw from 'rehype-raw';
 import { ReasoningChatMessage } from '@/types';
+
+import 'highlight.js/styles/github.css'; // 代码高亮样式
 
 interface UnifiedMessageProps {
   message: ReasoningChatMessage;
@@ -14,6 +21,11 @@ export const UnifiedMessage: React.FC<UnifiedMessageProps> = ({
   onPlayAudio
 }) => {
   const contentRef = useRef<HTMLDivElement>(null);
+  const finalMessageRef = useRef<HTMLDivElement>(null);
+
+  // 流式打字机效果状态
+  const [displayedContent, setDisplayedContent] = useState('');
+  const [isTyping, setIsTyping] = useState(false);
 
   // 自动滚动思维链内容
   useEffect(() => {
@@ -21,6 +33,99 @@ export const UnifiedMessage: React.FC<UnifiedMessageProps> = ({
       contentRef.current.scrollTop = contentRef.current.scrollHeight;
     }
   }, [message.reasoningContent, message.messageType, message.isReasoningComplete]);
+
+  // 流式打字机效果
+  useEffect(() => {
+    if (message.messageType === 'assistant_final' && message.content !== displayedContent) {
+      setIsTyping(true);
+      setDisplayedContent('');
+      
+      let index = 0;
+      const content = message.content;
+      
+      const timer = setInterval(() => {
+        if (index < content.length) {
+          setDisplayedContent(prev => prev + content[index]);
+          index++;
+          
+          // 自动滚动到底部
+          if (finalMessageRef.current) {
+            finalMessageRef.current.scrollTop = finalMessageRef.current.scrollHeight;
+          }
+        } else {
+          setIsTyping(false);
+          clearInterval(timer);
+        }
+      }, 20); // 每20ms添加一个字符
+      
+      return () => clearInterval(timer);
+    } else if (message.messageType !== 'assistant_final') {
+      // 对于非最终回复，直接显示内容
+      setDisplayedContent(message.content);
+      setIsTyping(false);
+    }
+  }, [message.content, message.messageType]);
+
+  // Markdown渲染组件
+  const MarkdownRenderer: React.FC<{ content: string; className?: string }> = ({ content, className = '' }) => (
+    <div className={`prose prose-sm max-w-none ${className}`}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeHighlight, rehypeRaw]}
+        components={{
+          code: ({ node, inline, className, children, ...props }: any) => {
+            if (inline) {
+              return (
+                <code
+                  className="bg-gray-100 text-gray-800 px-1 py-0.5 rounded text-sm font-mono"
+                  {...props}
+                >
+                  {children}
+                </code>
+              );
+            }
+            return (
+              <pre className="bg-gray-50 border border-gray-200 rounded-lg p-3 overflow-x-auto">
+                <code className={className} {...props}>
+                  {children}
+                </code>
+              </pre>
+            );
+          },
+          a: ({ href, children, ...props }: any) => (
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:text-blue-800 underline"
+              {...props}
+            >
+              {children}
+            </a>
+          ),
+          table: ({ children, ...props }: any) => (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200 border border-gray-200 rounded-lg" {...props}>
+                {children}
+              </table>
+            </div>
+          ),
+          th: ({ children, ...props }: any) => (
+            <th className="px-3 py-2 bg-gray-50 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-b border-gray-200" {...props}>
+              {children}
+            </th>
+          ),
+          td: ({ children, ...props }: any) => (
+            <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900 border-b border-gray-100" {...props}>
+              {children}
+            </td>
+          ),
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
 
   // 渲染思维链
   const renderReasoning = () => {
@@ -102,14 +207,6 @@ export const UnifiedMessage: React.FC<UnifiedMessageProps> = ({
               </div>
             </div>
           ))}
-          
-          {message.toolExecution.postExecutionReasoning && (
-            <div className="mt-3 pt-3 border-t border-gray-100">
-              <div className="text-sm text-gray-600 whitespace-pre-wrap">
-                {message.toolExecution.postExecutionReasoning}
-              </div>
-            </div>
-          )}
         </div>
       </div>
     );
@@ -135,16 +232,31 @@ export const UnifiedMessage: React.FC<UnifiedMessageProps> = ({
         </div>
         
         {/* 消息内容 */}
-        <div className="flex-1">
-          <p className="text-gray-900">
-            {message.content}
-            {/* 语音标识 */}
-            {message.isVoice && (
-              <span className="ml-2 inline-flex items-center">
-                <Mic size={12} className="opacity-75" />
-              </span>
-            )}
-          </p>
+        <div className="flex-1" ref={message.messageType === 'assistant_final' ? finalMessageRef : undefined}>
+          {message.role === 'assistant' && message.messageType === 'assistant_final' ? (
+            <div className="text-gray-900">
+              <MarkdownRenderer content={displayedContent} />
+              {isTyping && (
+                <span className="inline-block w-2 h-4 bg-gray-500 ml-1 animate-pulse"></span>
+              )}
+              {/* 语音标识 */}
+              {message.isVoice && (
+                <span className="ml-2 inline-flex items-center">
+                  <Mic size={12} className="opacity-75" />
+                </span>
+              )}
+            </div>
+          ) : (
+            <p className="text-gray-900">
+              {message.content}
+              {/* 语音标识 */}
+              {message.isVoice && (
+                <span className="ml-2 inline-flex items-center">
+                  <Mic size={12} className="opacity-75" />
+                </span>
+              )}
+            </p>
+          )}
           
           {/* 语音播放按钮 */}
           {message.audioUrl && onPlayAudio && (

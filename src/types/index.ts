@@ -22,7 +22,6 @@ export interface ToolExecutionData {
   status: 'executing' | 'completed' | 'error';
   startTime: Date;
   endTime?: Date;
-  postExecutionReasoning?: string; // 工具执行后的思考
 }
 
 // 统一的聊天响应类型

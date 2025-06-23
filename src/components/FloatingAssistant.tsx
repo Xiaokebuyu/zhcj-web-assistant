@@ -719,8 +719,11 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
       }
 
       let currentReasoningMessage: ReasoningChatMessage | null = null;
-      let currentToolMessage: ReasoningChatMessage | null = null;
-      let reasoningStartTime = Date.now();
+              let currentToolMessage: ReasoningChatMessage | null = null;
+        let reasoningStartTime = Date.now();
+        let currentPostToolReasoningMessage: ReasoningChatMessage | null = null;
+        let postToolReasoningStartTime = Date.now();
+        let currentFinalMessage: ReasoningChatMessage | null = null;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -738,26 +741,57 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
               const parsed: UnifiedChatResponse = JSON.parse(data);
 
               if (parsed.type === 'reasoning') {
-                if (!currentReasoningMessage) {
-                  // 创建新的思维链消息
-                  currentReasoningMessage = {
-                    id: `reasoning-${parsed.messageId}`,
-                    role: 'assistant',
-                    content: '',
-                    timestamp: new Date(reasoningStartTime),
-                    messageType: 'reasoning',
-                    reasoningContent: parsed.full_reasoning || '',
-                    isReasoningComplete: false,
-                    isCollapsed: false
-                  };
-                  setMessages(prev => [...prev, currentReasoningMessage!]);
+                // 思维链处理 - 区分阶段
+                if (parsed.phase === 'post_tool') {
+                  // 工具执行后的思维链 - 创建新的思维链消息
+                  if (!currentPostToolReasoningMessage) {
+                    currentPostToolReasoningMessage = {
+                      id: `post-reasoning-${parsed.messageId}`,
+                      role: 'assistant',
+                      content: '',
+                      timestamp: new Date(),
+                      messageType: 'reasoning',
+                      reasoningContent: parsed.content || '',
+                      isReasoningComplete: false
+                    };
+                    setMessages(prev => [...prev, currentPostToolReasoningMessage!]);
+                    postToolReasoningStartTime = Date.now();
+                  } else {
+                    // 更新现有的工具执行后思维链消息
+                    setMessages(prev => prev.map(msg => 
+                      msg.id === currentPostToolReasoningMessage!.id 
+                        ? { 
+                            ...msg, 
+                            reasoningContent: parsed.full_reasoning || (msg.reasoningContent + (parsed.content || ''))
+                          }
+                        : msg
+                    ));
+                  }
                 } else {
-                  // 更新思维链内容
-                  setMessages(prev => prev.map(msg => 
-                    msg.id === currentReasoningMessage!.id 
-                      ? { ...msg, reasoningContent: parsed.full_reasoning || '' }
-                      : msg
-                  ));
+                  // 第一阶段思维链处理（保持不变）
+                  if (!currentReasoningMessage) {
+                    currentReasoningMessage = {
+                      id: `reasoning-${parsed.messageId}`,
+                      role: 'assistant',
+                      content: '',
+                      timestamp: new Date(),
+                      messageType: 'reasoning',
+                      reasoningContent: parsed.content || '',
+                      isReasoningComplete: false
+                    };
+                    setMessages(prev => [...prev, currentReasoningMessage!]);
+                    reasoningStartTime = Date.now();
+                  } else {
+                    // 更新现有思维链消息
+                    setMessages(prev => prev.map(msg => 
+                      msg.id === currentReasoningMessage!.id 
+                        ? { 
+                            ...msg, 
+                            reasoningContent: parsed.full_reasoning || (msg.reasoningContent + (parsed.content || ''))
+                          }
+                        : msg
+                    ));
+                  }
                 }
 
               } else if (parsed.type === 'tool_decision') {
@@ -809,6 +843,29 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                   ));
                 }
 
+              } else if (parsed.type === 'final_content') {
+                // 处理流式最终回复
+                if (!currentFinalMessage) {
+                  currentFinalMessage = {
+                    id: `final-${parsed.messageId}`,
+                    role: 'assistant',
+                    content: parsed.content || '',
+                    timestamp: new Date(),
+                    messageType: 'assistant_final'
+                  };
+                  setMessages(prev => [...prev, currentFinalMessage!]);
+                } else {
+                  // 更新流式内容
+                  setMessages(prev => prev.map(msg => 
+                    msg.id === currentFinalMessage!.id 
+                      ? { 
+                          ...msg, 
+                          content: parsed.full_content || (msg.content + (parsed.content || ''))
+                        }
+                      : msg
+                  ));
+                }
+
               } else if (parsed.type === 'done') {
                 // 完成所有处理
                 if (currentToolMessage) {
@@ -819,32 +876,45 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                           toolExecution: {
                             ...msg.toolExecution,
                             status: 'completed',
-                            endTime: new Date(),
-                            postExecutionReasoning: parsed.post_tool_reasoning
+                            endTime: new Date()
                           }
                         }
                       : msg
                   ));
                 }
 
-                // 添加最终回复消息
-                if (parsed.final_content) {
+                // 完成工具执行后思维链
+                if (currentPostToolReasoningMessage) {
+                  const duration = Math.round((Date.now() - postToolReasoningStartTime) / 1000);
+                  setMessages(prev => prev.map(msg => 
+                    msg.id === currentPostToolReasoningMessage!.id 
+                      ? { 
+                          ...msg, 
+                          isReasoningComplete: true,
+                          reasoningDuration: duration,
+                          isCollapsed: true // 自动收起工具执行后思维链
+                        }
+                      : msg
+                  ));
+                }
+
+                // 完成最终回复并添加语音
+                if (currentFinalMessage && parsed.final_content) {
                   let audioUrl: string | undefined = undefined;
                   if (enableVoice && voiceSettings.autoPlay) {
                     const generatedUrl = await generateSpeech(parsed.final_content);
                     audioUrl = generatedUrl || undefined;
                   }
 
-                  const finalMessage: ReasoningChatMessage = {
-                    id: `final-${parsed.messageId}`,
-                    role: 'assistant',
-                    content: parsed.final_content,
-                    timestamp: new Date(),
-                    messageType: 'assistant_final',
-                    audioUrl
-                  };
-
-                  setMessages(prev => [...prev, finalMessage]);
+                  // 更新最终消息添加语音
+                  setMessages(prev => prev.map(msg => 
+                    msg.id === currentFinalMessage!.id 
+                      ? { 
+                          ...msg, 
+                          audioUrl
+                        }
+                      : msg
+                  ));
 
                   // 自动播放语音
                   if (audioUrl && voiceSettings.autoPlay) {
