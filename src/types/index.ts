@@ -19,18 +19,19 @@ export interface ToolExecutionData {
   id: string;
   toolCalls: ToolCall[];
   results: (ToolResult | UnifiedChatResponse)[];
-  status: 'executing' | 'completed' | 'error';
+  status: 'executing' | 'pending' | 'completed' | 'error';
   startTime: Date;
   endTime?: Date;
 }
 
 // 统一的聊天响应类型
 export interface UnifiedChatResponse {
-  type: 'reasoning' | 'tool_decision' | 'tool_execution' | 'tool_result' | 'final_content' | 'done' | 'error';
+  type: 'reasoning' | 'content' | 'tool_execution' | 'tool_result' | 'pending_openmanus' | 'done' | 'error';
   content?: string;
   reasoning_content?: string;
   tool_calls?: ToolCall[];
   tool_results?: ToolResult[];
+  task_ids?: string[];
   final_content?: string;
   error?: string;
   messageId?: string;
@@ -470,8 +471,8 @@ export interface DoubaoWebSocketMessage {
 
 // 新的统一消息类型 - 替换现有的ChatMessage
 export interface ReasoningChatMessage extends ChatMessage {
-  // 消息类型：user | reasoning | tool_execution | assistant_final  
-  messageType: 'user' | 'reasoning' | 'tool_execution' | 'assistant_final';
+  // 消息类型：user | reasoning | tool_execution | assistant_final | assistant  
+  messageType: 'user' | 'reasoning' | 'tool_execution' | 'assistant_final' | 'assistant';
   
   // 思维链内容
   reasoningContent?: string;

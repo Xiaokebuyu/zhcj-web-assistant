@@ -142,8 +142,8 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   });
   
   // OpenManus 任务监控状态
-  const [pendingTaskIds, setPendingTaskIds] = useState<string[]>([]);
-  const taskWatchersRef = useRef<Record<string, NodeJS.Timeout | null>>({});
+  const [pendingOpenManusTasks, setPendingOpenManusTasks] = useState<string[]>([]);
+  const [taskMonitorIntervals, setTaskMonitorIntervals] = useState<Map<string, NodeJS.Timeout>>(new Map());
   
   const [voiceState, setVoiceState] = useState<VoiceState>({
     isListening: false,
@@ -948,75 +948,52 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
         throw new Error('网络请求失败');
       }
 
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error('无法读取响应');
+      // 🔑 新的流式响应处理逻辑
+      await handleStreamResponse(response);
+
+    } catch (error) {
+      console.error('❌ 发送消息失败:', error);
+      
+      const errorMessage: ReasoningChatMessage = {
+        id: Date.now().toString(),
+                          role: 'assistant',
+        content: '抱歉，发生了错误。请稍后再试。',
+                          timestamp: new Date(),
+        messageType: 'assistant'
+      };
+      setMessages(prev => [...prev, errorMessage]);
+      
+      if (onError) {
+        onError(error instanceof Error ? error : new Error('发送消息失败'));
       }
+    } finally {
+      setIsLoading(false);
+    }
+  }, [messages, isLoading, pageContext, onError]);
 
-      let currentReasoningMessage: ReasoningChatMessage | null = null;
-      let currentToolMessage: ReasoningChatMessage | null = null;
-      let reasoningStartTime = Date.now();
-      let currentPostToolReasoningMessage: ReasoningChatMessage | null = null;
-      let postToolReasoningStartTime = Date.now();
-      let preToolFinalMessage: ReasoningChatMessage | null = null;
-      let postToolFinalMessage: ReasoningChatMessage | null = null;
-      let toolDecisionReceived = false;
-      let buffer = ''; // 添加缓冲区处理不完整的数据
-      // 标记是否已为本次 assistant 回复生成过语音，防止重复请求
-      let voiceGenerated = false;
+  // 🆕 新的流式响应处理函数
+  const handleStreamResponse = useCallback(async (response: Response) => {
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('无法获取响应流');
 
+    let currentMessage: ReasoningChatMessage = {
+      id: `msg_${Date.now()}`,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date(),
+      messageType: 'assistant'
+    };
+
+    let hasAddedMessage = false;
+    let buffer = '';
+
+    try {
       while (true) {
         const { done, value } = await reader.read();
-        if (done) {
-          // 处理缓冲区中剩余的数据
-          if (buffer.trim()) {
-            const remainingLines = buffer.split('\n');
-            for (const line of remainingLines) {
-              if (line.startsWith('data: ')) {
-                const data = line.slice(6);
-                if (data !== '[DONE]') {
-                  try {
-                    const parsed: UnifiedChatResponse = JSON.parse(data);
-                    // 处理剩余的数据...
-                    if (parsed.type === 'final_content') {
-                      const targetMsgRef = toolDecisionReceived ? 'post' : 'pre';
-                      let targetMessage: ReasoningChatMessage | null = toolDecisionReceived ? postToolFinalMessage : preToolFinalMessage;
+        if (done) break;
 
-                      if (!targetMessage) {
-                        targetMessage = {
-                          id: `${targetMsgRef}-final-${parsed.messageId || Date.now()}`,
-                          role: 'assistant',
-                          content: parsed.content || '',
-                          timestamp: new Date(),
-                          messageType: 'assistant_final'
-                        };
-                        setMessages(prev => [...prev, targetMessage!]);
-                        if (toolDecisionReceived) {
-                          postToolFinalMessage = targetMessage;
-                        } else {
-                          preToolFinalMessage = targetMessage;
-                        }
-                      } else if (parsed.content) {
-                        setMessages(prev => prev.map(msg =>
-                          msg.id === targetMessage!.id ? { ...msg, content: msg.content + parsed.content } : msg
-                        ));
-                      }
-                    }
-                  } catch (e) {
-                    console.error('解析剩余数据错误:', e, line);
-                  }
-                }
-              }
-            }
-          }
-          break;
-        }
-
-        // 将新数据添加到缓冲区
         buffer += new TextDecoder().decode(value);
         const lines = buffer.split('\n');
-        
-        // 保留最后一行（可能不完整）
         buffer = lines.pop() || '';
 
         for (const line of lines) {
@@ -1025,349 +1002,383 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
             if (data === '[DONE]') continue;
 
             try {
-              const parsed: UnifiedChatResponse = JSON.parse(data);
+              const parsed = JSON.parse(data);
+              console.log('📨 收到流式数据:', parsed.type, parsed);
 
-              if (parsed.type === 'reasoning') {
-                // 思维链处理 - 使用防抖机制减少渲染频率
-                if (parsed.phase === 'post_tool') {
-                  // 工具执行后的思维链
-                  if (!currentPostToolReasoningMessage) {
-                    currentPostToolReasoningMessage = {
-                      id: `post-reasoning-${parsed.messageId}`,
-                      role: 'assistant',
-                      content: '',
-                      timestamp: new Date(),
-                      messageType: 'reasoning',
-                      reasoningContent: parsed.content || '',
-                      isReasoningComplete: false
-                    };
-                    setMessages(prev => [...prev, currentPostToolReasoningMessage!]);
-                    postToolReasoningStartTime = Date.now();
-                    // 初始化累积思维链内容
-                    reasoningContentRef.current[currentPostToolReasoningMessage.id] = parsed.content || '';
+              switch (parsed.type) {
+                case 'reasoning':
+                  // 处理推理内容
+                  if (!hasAddedMessage) {
+                    currentMessage.messageType = 'reasoning';
+                    currentMessage.reasoningContent = parsed.content || '';
+                    currentMessage.isReasoningComplete = false;
+                    setMessages(prev => [...prev, currentMessage]);
+                    hasAddedMessage = true;
                   } else {
-                    // 累积思维链内容，使用防抖更新
-                    const messageId = currentPostToolReasoningMessage.id;
-                    reasoningContentRef.current[messageId] = 
-                      parsed.full_reasoning || 
-                      (reasoningContentRef.current[messageId] || '') + (parsed.content || '');
-                    
-                    // 使用防抖更新UI
-                    debouncedReasoningUpdate(messageId, reasoningContentRef.current[messageId]);
+                    setMessages(prev => prev.map(msg => 
+                      msg.id === currentMessage.id 
+                        ? { 
+                            ...msg, 
+                            reasoningContent: (msg.reasoningContent || '') + (parsed.content || '')
+                          }
+                        : msg
+                    ));
                   }
-                } else {
-                  // 第一阶段思维链处理
-                  if (!currentReasoningMessage) {
-                    currentReasoningMessage = {
-                      id: `reasoning-${parsed.messageId}`,
-                      role: 'assistant',
-                      content: '',
-                      timestamp: new Date(),
-                      messageType: 'reasoning',
-                      reasoningContent: parsed.content || '',
-                      isReasoningComplete: false
-                    };
-                    setMessages(prev => [...prev, currentReasoningMessage!]);
-                    reasoningStartTime = Date.now();
-                    // 初始化累积思维链内容
-                    reasoningContentRef.current[currentReasoningMessage.id] = parsed.content || '';
-                  } else {
-                    // 累积思维链内容，使用防抖更新
-                    const messageId = currentReasoningMessage.id;
-                    reasoningContentRef.current[messageId] = 
-                      parsed.full_reasoning || 
-                      (reasoningContentRef.current[messageId] || '') + (parsed.content || '');
-                    
-                    // 使用防抖更新UI
-                    debouncedReasoningUpdate(messageId, reasoningContentRef.current[messageId]);
-                  }
-                }
+                  break;
 
-              } else if (parsed.type === 'tool_decision') {
-                // 完成思维链，开始工具执行
-                if (currentReasoningMessage) {
-                  const messageId = currentReasoningMessage.id;
-                  const finalReasoningContent = reasoningContentRef.current[messageId];
-                  const duration = Math.round((Date.now() - reasoningStartTime) / 1000);
-                  
-                  // 立即更新思维链的最终状态
+                case 'content':
+                  // 处理最终内容
+                  if (!hasAddedMessage) {
+                    currentMessage.content = parsed.content || '';
+                    setMessages(prev => [...prev, currentMessage]);
+                    hasAddedMessage = true;
+                  } else {
                   setMessages(prev => prev.map(msg => 
-                    msg.id === messageId 
+                      msg.id === currentMessage.id 
                       ? { 
                           ...msg, 
-                          reasoningContent: finalReasoningContent || msg.reasoningContent,
-                          isReasoningComplete: true, 
-                          reasoningDuration: duration,
-                          isCollapsed: true 
+                            content: msg.content + (parsed.content || ''),
+                            messageType: 'assistant'
                         }
                       : msg
                   ));
-                  
-                  // 清理累积内容
-                  delete reasoningContentRef.current[messageId];
-                }
+                  }
+                  break;
 
-                // 创建工具执行消息
-                currentToolMessage = {
-                  id: `tool-${parsed.messageId}`,
+                case 'tool_execution':
+                  console.log('🛠️ 工具执行开始:', parsed.tool_calls);
+                  
+                  // 完成推理阶段
+                  if (hasAddedMessage && currentMessage.messageType === 'reasoning') {
+                    setMessages(prev => prev.map(msg => 
+                      msg.id === currentMessage.id 
+                        ? { ...msg, isReasoningComplete: true, isCollapsed: true }
+                        : msg
+                    ));
+                  }
+                  
+                  // 添加工具执行消息
+                  const toolMessage: ReasoningChatMessage = {
+                    id: `tool_${Date.now()}`,
                   role: 'assistant',
                   content: '',
                   timestamp: new Date(),
                   messageType: 'tool_execution',
                   toolExecution: {
-                    id: `exec-${parsed.messageId}`,
+                      id: parsed.messageId || `exec_${Date.now()}`,
                     toolCalls: parsed.tool_calls || [],
                     results: [],
                     status: 'executing',
                     startTime: new Date()
                   }
                 };
-                setMessages(prev => [...prev, currentToolMessage!]);
+                  
+                  setMessages(prev => [...prev, toolMessage]);
+                  
+                  setToolProgress({
+                    isToolCalling: true,
+                    progress: `执行${parsed.tool_calls?.length || 0}个工具...`,
+                    step: 1,
+                    totalSteps: 2
+                  });
+                  break;
 
-                toolDecisionReceived = true; // 标记已进入工具执行阶段
-
-              } else if (parsed.type === 'tool_result') {
+                case 'tool_result':
+                  console.log('🔧 工具结果:', parsed.tool_call_id, parsed.result);
+                  
                 // 更新工具执行结果
-                if (currentToolMessage) {
-                  setMessages(prev => prev.map(msg => 
-                    msg.id === currentToolMessage!.id && msg.toolExecution
-                      ? { 
+                  setMessages(prev => prev.map(msg => {
+                    if (msg.toolExecution && msg.toolExecution.id === parsed.messageId) {
+                      const updatedResults = [...msg.toolExecution.results];
+                      const existingIndex = updatedResults.findIndex(r => r.tool_call_id === parsed.tool_call_id);
+                      
+                      if (existingIndex >= 0) {
+                        updatedResults[existingIndex] = {
+                          tool_call_id: parsed.tool_call_id,
+                          role: 'tool',
+                          content: JSON.stringify(parsed.result)
+                        };
+                      } else {
+                        updatedResults.push({
+                          tool_call_id: parsed.tool_call_id,
+                          role: 'tool',
+                          content: JSON.stringify(parsed.result)
+                        });
+                      }
+                      
+                      return {
                           ...msg, 
                           toolExecution: {
                             ...msg.toolExecution,
-                            results: [...msg.toolExecution.results, parsed]
-                          }
+                          results: updatedResults
                         }
-                      : msg
-                  ));
-                }
+                      };
+                    }
+                    return msg;
+                  }));
+                  break;
 
-              } else if (parsed.type === 'final_content') {
-                // 根据是否已收到 tool_decision 决定写入哪一段回复
-                const targetMsgRef = toolDecisionReceived ? 'post' : 'pre';
-                let targetMessage: ReasoningChatMessage | null = toolDecisionReceived ? postToolFinalMessage : preToolFinalMessage;
+                case 'pending_openmanus':
+                  console.log('⏳ 检测到pending OpenManus任务:', parsed.task_ids);
+                  
+                  // 设置pending任务
+                  setPendingOpenManusTasks(parsed.task_ids || []);
+                  
+                  // 更新工具执行状态
+                  setMessages(prev => prev.map(msg => {
+                    if (msg.toolExecution && msg.toolExecution.id === parsed.messageId) {
+                      return {
+                        ...msg,
+                        toolExecution: {
+                          ...msg.toolExecution,
+                          status: 'pending'
+                        }
+                      };
+                    }
+                    return msg;
+                  }));
+                  
+                  setToolProgress({
+                    isToolCalling: true,
+                    progress: `OpenManus任务执行中，请稍候...`,
+                    step: 1,
+                    totalSteps: 2
+                  });
+                  
+                                     // 🔑 启动任务监控
+                   startTaskMonitoring(parsed.task_ids || [], parsed.messageId || '');
+                  break;
 
-                if (!targetMessage) {
-                  targetMessage = {
-                    id: `${targetMsgRef}-final-${parsed.messageId}`,
-                    role: 'assistant',
-                    content: '',
-                    timestamp: new Date(),
-                    messageType: 'assistant_final'
-                  };
-                  setMessages(prev => [...prev, targetMessage!]);
-                  // 存储回引用
-                  if (toolDecisionReceived) {
-                    postToolFinalMessage = targetMessage;
-                  } else {
-                    preToolFinalMessage = targetMessage;
-                  }
-                  streamingContentRef.current[targetMessage.id] = '';
-                }
-
-                // 增量累积内容
-                if (parsed.content && targetMessage) {
-                  const messageId = targetMessage.id;
-                  const delta = parsed.content;
-                  streamingContentRef.current[messageId] = (streamingContentRef.current[messageId] || '') + delta;
-                  debouncedContentUpdate(messageId, streamingContentRef.current[messageId]);
-
-                  // 新增：增量语音处理（仅当启用增量TTS时）
-                  if (incrementalTTS && !voiceGenerated) {
-                    processStreamingSpeech(messageId, delta);
-                    voiceGenerated = true; // 已生成语音
-                  }
-                }
-
-              } else if (parsed.type === 'done') {
-                // 确保两段回复的流式内容最终更新
-                const finalizeMessage = (msg: ReasoningChatMessage | null): string | null => {
-                  if (!msg) return null;
-                  const messageId = msg.id;
-                  const finalContent = streamingContentRef.current[messageId];
-                  if (finalContent) {
-                    immediateContentUpdate(messageId, finalContent);
-                    delete streamingContentRef.current[messageId];
-                    return finalContent;
-                  }
-                  // 如果已经没有缓存，则使用msg.content
-                  return msg.content || null;
-                };
-
-                const preFinalContent = finalizeMessage(preToolFinalMessage);
-                const postFinalContent = finalizeMessage(postToolFinalMessage);
-
-                // 完成所有处理
-                if (currentToolMessage) {
+                case 'done':
+                  console.log('✅ 响应完成');
+                  
+                  // 完成思维链
+                  if (hasAddedMessage && currentMessage.messageType === 'reasoning') {
                   setMessages(prev => prev.map(msg => 
-                    msg.id === currentToolMessage!.id && msg.toolExecution
-                      ? { 
+                      msg.id === currentMessage.id 
+                        ? { ...msg, isReasoningComplete: true, isCollapsed: true }
+                        : msg
+                    ));
+                  }
+                  
+                  // 完成工具执行
+                  setMessages(prev => prev.map(msg => {
+                    if (msg.toolExecution) {
+                      return {
                           ...msg, 
                           toolExecution: {
                             ...msg.toolExecution,
                             status: 'completed',
                             endTime: new Date()
                           }
-                        }
-                      : msg
-                  ));
-                }
-
-                // 完成工具执行后思维链
-                if (currentPostToolReasoningMessage) {
-                  const messageId = currentPostToolReasoningMessage.id;
-                  const finalReasoningContent = reasoningContentRef.current[messageId];
-                  const duration = Math.round((Date.now() - postToolReasoningStartTime) / 1000);
-                  
-                  setMessages(prev => prev.map(msg => 
-                    msg.id === messageId 
-                      ? { 
-                          ...msg, 
-                          reasoningContent: finalReasoningContent || msg.reasoningContent,
-                          isReasoningComplete: true,
-                          reasoningDuration: duration,
-                          isCollapsed: true
-                        }
-                      : msg
-                  ));
-                  
-                  // 清理累积内容
-                  delete reasoningContentRef.current[messageId];
-                }
-
-                // 如果完全没有 final_content (边缘情况)
-                if (!preToolFinalMessage && !postToolFinalMessage && parsed.final_content) {
-                  postToolFinalMessage = {
-                    id: `post-final-${parsed.messageId || Date.now()}`,
-                    role: 'assistant',
-                    content: parsed.final_content,
-                    timestamp: new Date(),
-                    messageType: 'assistant_final'
-                  };
-                  setMessages(prev => [...prev, postToolFinalMessage!]);
-                }
-
-                // 如果未启用增量朗读，则在回复完成后一次性生成并播放完整语音
-                if (!incrementalTTS && !voiceGenerated) {
-                  const voiceTarget = postToolFinalMessage || preToolFinalMessage;
-                  const finalContentForVoice = postFinalContent || preFinalContent;
-                  if (voiceTarget && finalContentForVoice && enableVoice && voiceSettings.autoPlay) {
-                    if (finalContentForVoice) {
-                      try {
-                        const audioUrl = await generateSpeech(finalContentForVoice);
-                        if (audioUrl) {
-                          setMessages(prev => prev.map(msg => 
-                            msg.id === voiceTarget!.id 
-                              ? { ...msg, audioUrl }
-                              : msg
-                          ));
-                          setTimeout(() => playAudio(audioUrl), 500);
-                          voiceGenerated = true; // 已生成语音
-                        }
-                      } catch (error) {
-                        console.error('生成语音失败:', error);
-                      }
+                      };
                     }
-                  }
-                }
-
-                // 如果启用了增量TTS，确保朗读残余文本
-                if (incrementalTTS) {
-                  for (const [msgId, remaining] of Object.entries(speechBufferRef.current)) {
-                    if (remaining.trim()) {
-                      try {
-                        const url = await generateSpeech(remaining);
-                        if (url) enqueueAudio(url);
-                      } catch (err) {
-                        console.error('清空残余TTS失败:', err);
-                      }
-                    }
-                    // 无论成功与否都删除，避免重复
-                    delete speechBufferRef.current[msgId];
-                  }
-                } 
-              } else if ((parsed as any).type === 'pending_openmanus') {
-                // 处理OpenManus异步任务挂起
-                const task_ids: string[] = (parsed as any).task_ids || [];
-                if (task_ids.length > 0) {
-                  console.log('检测到未完成的OpenManus任务:', task_ids);
-
-                  // 将任务ID保存到待监控列表
-                  setPendingTaskIds(prev => {
-                    const set = new Set(prev);
-                    task_ids.forEach(id => set.add(id));
-                    return Array.from(set);
+                    return msg;
+                  }));
+                  
+                  setToolProgress({
+                    isToolCalling: false,
+                    progress: '',
+                    step: 0,
+                    totalSteps: 0
                   });
+                  break;
 
-                  // 标记当前工具执行消息仍在执行中
-                  if (currentToolMessage) {
-                    setMessages(prev => prev.map(msg =>
-                      msg.id === currentToolMessage!.id && msg.toolExecution
-                        ? { ...msg, toolExecution: { ...msg.toolExecution, status: 'executing' } }
-                        : msg
-                    ));
-                  }
-                }
-
-                // 流在服务器端已经关闭，这里直接结束循环
-                reader.cancel();
-                break;
+                case 'error':
+                  console.error('❌ 流式响应错误:', parsed.error);
+                  
+                  const errorMessage: ReasoningChatMessage = {
+                    id: Date.now().toString(),
+                    role: 'assistant',
+                    content: `错误：${parsed.error}`,
+                    timestamp: new Date(),
+                    messageType: 'assistant'
+                  };
+                  
+                  setMessages(prev => [...prev, errorMessage]);
+                  
+                  setToolProgress({
+                    isToolCalling: false,
+                    progress: '',
+                    step: 0,
+                    totalSteps: 0
+                  });
+                  break;
               }
             } catch (e) {
-              console.error('解析响应错误:', e);
+              console.error('解析流式数据错误:', e);
             }
           }
         }
       }
-
-    } catch (error) {
-      console.error('发送消息失败:', error);
-      
-      // 检查是否有任何部分完成的消息
-      const hasAnyResponse = messages.some(msg => 
-        msg.timestamp > userMessage.timestamp && msg.role === 'assistant'
-      );
-      
-      if (!hasAnyResponse) {
-        // 如果完全没有响应，添加错误消息
-        setMessages(prev => [...prev, {
-          id: Date.now().toString(),
-          role: 'assistant',
-          content: '抱歉，我遇到了一些问题。请稍后再试。',
-          timestamp: new Date(),
-          messageType: 'assistant_final'
-        }]);
-      } else {
-        // 如果有部分响应但没有最终消息，尝试创建一个
-        const hasReasoningOnly = messages.some(msg => 
-          msg.timestamp > userMessage.timestamp && 
-          msg.messageType === 'reasoning' &&
-          !messages.some(m => m.messageType === 'assistant_final' && m.timestamp > userMessage.timestamp)
-        );
-        
-        if (hasReasoningOnly) {
-          // 添加一个说明消息
-          setMessages(prev => [...prev, {
-            id: Date.now().toString(),
-            role: 'assistant',
-            content: '抱歉，我的回复被中断了。让我重新组织一下思路...',
-            timestamp: new Date(),
-            messageType: 'assistant_final'
-          }]);
-        }
-      }
     } finally {
-      setIsLoading(false);
-      
-      // 清理所有定时器
-      if (transcriptTimeoutRef.current) {
-        clearTimeout(transcriptTimeoutRef.current);
-      }
-      if (contentUpdateTimeoutRef.current) {
-        clearTimeout(contentUpdateTimeoutRef.current);
-      }
+      reader.releaseLock();
     }
-  }, [messages, pageContext, isLoading, enableVoice, voiceSettings.autoPlay, generateSpeech, playAudio, debouncedContentUpdate, immediateContentUpdate, debouncedReasoningUpdate, immediateReasoningUpdate]);
+  }, [setMessages, setToolProgress]);
+
+  // 🆕 启动OpenManus任务监控
+  const startTaskMonitoring = useCallback((taskIds: string[], messageId: string) => {
+    console.log('🔍 启动任务监控:', taskIds);
+    
+    // 清理现有的监控间隔
+    taskMonitorIntervals.forEach(interval => clearInterval(interval));
+    setTaskMonitorIntervals(new Map());
+    
+    taskIds.forEach(taskId => {
+      const interval = setInterval(async () => {
+        try {
+          console.log(`🔍 检查任务状态: ${taskId}`);
+          
+          const response = await fetch(`/api/openmanus/status?task_id=${taskId}`);
+          const statusData = await response.json();
+          
+          if (statusData.success) {
+            if (statusData.status === 'completed') {
+              console.log(`✅ 任务完成: ${taskId}`);
+              
+              // 清理该任务的监控
+              clearInterval(interval);
+              setTaskMonitorIntervals(prev => {
+                const newMap = new Map(prev);
+                newMap.delete(taskId);
+                return newMap;
+              });
+              
+              // 更新工具结果
+              setMessages(prev => prev.map(msg => {
+                if (msg.toolExecution) {
+                  const updatedResults = msg.toolExecution.results.map(result => {
+                    try {
+                      // 确保 content 存在且为字符串
+                      if (result.content && typeof result.content === 'string') {
+                        const content = JSON.parse(result.content as string);
+                        if (content.task_id === taskId) {
+                          return {
+                            ...result,
+                            content: JSON.stringify({
+                              success: true,
+                              task_id: taskId,
+                              status: 'completed',
+                              result: statusData.result,
+                              message: '任务已完成',
+                              timestamp: new Date().toISOString()
+                            })
+                          };
+                        }
+                      }
+                    } catch (e) {
+                      // 忽略解析错误
+                    }
+                    return result;
+                  });
+                  
+                  return {
+                    ...msg,
+                    toolExecution: {
+                      ...msg.toolExecution,
+                      results: updatedResults,
+                      status: 'completed'
+                    }
+                  };
+                }
+                return msg;
+              }));
+              
+              // 从pending列表移除
+              setPendingOpenManusTasks(prev => prev.filter(id => id !== taskId));
+              
+            } else if (statusData.status === 'failed') {
+              console.log(`❌ 任务失败: ${taskId}`, statusData.error);
+              
+              // 清理监控
+              clearInterval(interval);
+              setTaskMonitorIntervals(prev => {
+                const newMap = new Map(prev);
+                newMap.delete(taskId);
+                return newMap;
+              });
+              
+              // 从pending列表移除
+              setPendingOpenManusTasks(prev => prev.filter(id => id !== taskId));
+              
+              // 更新toolExecution状态为 error
+              setMessages(prev => prev.map(msg => {
+                if (msg.toolExecution) {
+                  return {
+                    ...msg,
+                    toolExecution: {
+                      ...msg.toolExecution,
+                      status: 'error'
+                    }
+                  };
+                }
+                return msg;
+              }));
+            }
+            // 其他状态继续监控
+          }
+        } catch (error) {
+          console.error(`❌ 检查任务状态失败: ${taskId}`, error);
+        }
+      }, 3000); // 每3秒检查一次
+      
+      setTaskMonitorIntervals(prev => new Map(prev).set(taskId, interval));
+    });
+    
+    // 超时保护（5分钟后停止监控）
+    setTimeout(() => {
+      taskIds.forEach(taskId => {
+        const interval = taskMonitorIntervals.get(taskId);
+        if (interval) {
+          clearInterval(interval);
+          console.log(`⏰ 任务监控超时: ${taskId}`);
+        }
+      });
+      setTaskMonitorIntervals(new Map());
+      setPendingOpenManusTasks([]);
+    }, 300000);
+  }, [taskMonitorIntervals, setMessages]);
+
+  // 🆕 监听pending任务变化，自动触发续写
+  useEffect(() => {
+    if (pendingOpenManusTasks.length === 0 && hadPendingRef.current && !resumeTriggeredRef.current) {
+      console.log('🎉 所有OpenManus任务完成，触发续写');
+      resumeTriggeredRef.current = true;
+      
+      // 不需要手动发送"继续"消息，后端会自动处理
+      setToolProgress({
+        isToolCalling: true,
+        progress: '正在生成回复...',
+        step: 2,
+        totalSteps: 2
+      });
+      
+      // 短暂延迟后完成
+      setTimeout(() => {
+        setToolProgress({
+          isToolCalling: false,
+          progress: '',
+          step: 0,
+          totalSteps: 0
+        });
+      }, 2000);
+    }
+    
+    if (pendingOpenManusTasks.length > 0) {
+      hadPendingRef.current = true;
+      resumeTriggeredRef.current = false;
+    }
+  }, [pendingOpenManusTasks]);
+
+  // 🔑 组件卸载时清理
+  useEffect(() => {
+    return () => {
+      // 清理所有监控间隔
+      taskMonitorIntervals.forEach(interval => clearInterval(interval));
+      setTaskMonitorIntervals(new Map());
+      setPendingOpenManusTasks([]);
+    };
+  }, [taskMonitorIntervals]);
 
   // 处理STT事件
   const handleSTTEvent = useCallback((event: StreamingSTTEvent) => {
@@ -1896,108 +1907,9 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   // -- 增量流式朗读开关。如果为 true，则在生成回复时实时播放分句语音。
   const incrementalTTS = false;
 
-  // ------------------------------------------------------------------
-  // 监听 pendingTaskIds，启动轮询检查任务状态
-  // ------------------------------------------------------------------
-  useEffect(() => {
-    const OPENMANUS_BASE_URL = process.env.NEXT_PUBLIC_OPENMANUS_API_URL || 'http://127.0.0.1:8001';
-
-    async function fetchTaskStatus(taskId: string) {
-      try {
-        const res = await fetch(`${OPENMANUS_BASE_URL}/api/task_status/${taskId}`);
-        if (!res.ok) throw new Error(`状态查询失败: ${res.status}`);
-        return await res.json();
-      } catch (err) {
-        console.error('获取任务状态失败:', err);
-        return null;
-      }
-    }
-
-    function startWatcher(taskId: string) {
-      if (taskWatchersRef.current[taskId]) return; // 已启动
-      const timer = setInterval(async () => {
-        const status = await fetchTaskStatus(taskId);
-        if (!status) return;
-        if (status.status === 'completed' || status.status === 'failed') {
-          clearInterval(taskWatchersRef.current[taskId]!);
-          taskWatchersRef.current[taskId] = null;
-
-          // 更新消息中的工具执行结果
-          setMessages(prev => prev.map(msg => {
-            if (msg.toolExecution) {
-              const idx = msg.toolExecution.results.findIndex(r => {
-                try {
-                  const obj = JSON.parse(r.content || '{}');
-                  return obj.task_id === taskId;
-                } catch {
-                  return false;
-                }
-              });
-              if (idx !== -1) {
-                const newResults = [...msg.toolExecution.results];
-                newResults[idx] = {
-                  tool_call_id: (newResults[idx] as any).tool_call_id || `tc_${taskId}`,
-                  role: 'tool',
-                  content: JSON.stringify({
-                    success: status.status === 'completed',
-                    task_id: taskId,
-                    status: status.status,
-                    result: status.result,
-                    error: status.error,
-                    progress: status.progress,
-                    timestamp: new Date().toISOString()
-                  })
-                } as any;
-                return {
-                  ...msg,
-                  toolExecution: {
-                    ...msg.toolExecution,
-                    results: newResults,
-                    status: status.status === 'completed' ? 'completed' : 'error',
-                    endTime: new Date()
-                  }
-                };
-              }
-            }
-            return msg;
-          }));
-
-          // 移除 taskId
-          setPendingTaskIds(prev => prev.filter(id => id !== taskId));
-        }
-      }, 5000); // 5秒一次
-      taskWatchersRef.current[taskId] = timer;
-    }
-
-    // 为每个待处理任务启动 watcher
-    pendingTaskIds.forEach(id => startWatcher(id));
-
-    // 清理函数：组件卸载时清除定时器
-    return () => {
-      Object.values(taskWatchersRef.current).forEach(timer => timer && clearInterval(timer));
-      taskWatchersRef.current = {};
-    };
-  }, [pendingTaskIds, setMessages]);
-
   // 位于 pendingTaskIds 状态声明之后，新增两个引用用于检测何时应触发续写
   const hadPendingRef = useRef(false);
   const resumeTriggeredRef = useRef(false);
-
-  // 监听 pendingTaskIds 变化，自动在任务全部完成后触发 Deepseek 续写
-  useEffect(() => {
-    if (pendingTaskIds.length > 0) {
-      // 有任务进行中
-      hadPendingRef.current = true;
-      resumeTriggeredRef.current = false;
-    } else {
-      // 没有待处理任务，且之前存在挂起任务，且尚未触发续写
-      if (hadPendingRef.current && !resumeTriggeredRef.current) {
-        resumeTriggeredRef.current = true;
-        // 发送"继续"提示，让 Deepseek 在工具结果基础上继续推理
-        sendMessage('继续', false, true);
-      }
-    }
-  }, [pendingTaskIds, sendMessage]);
 
   // Anthropic 风格悬浮按钮 - 使用内联样式确保显示
   if (!isOpen) {

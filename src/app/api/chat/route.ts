@@ -1,6 +1,6 @@
 // src/app/api/chat/route.ts
 // 集成了OpenManus AI代理功能的聊天API
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { ChatRequest, PageContext } from '@/types';
 
 // 删除重复的PageContextProcessor类定义，使用下面已有的更完整版本
@@ -29,6 +29,120 @@ interface ToolDefinition {
     parameters: Record<string, unknown>;
   };
 }
+
+interface ToolCall {
+  id: string;
+  type: 'function';
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
+// 工具定义
+const TOOL_DEFINITIONS = [
+  {
+    type: "function",
+    function: {
+      name: "get_weather",
+      description: "获取指定城市的天气信息",
+      parameters: {
+        type: "object",
+        properties: {
+          location: { type: "string", description: "城市名称" },
+          adm: { type: "string", description: "行政区域" }
+        },
+        required: ["location"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "web_search",
+      description: "公共互联网关键词搜索，获取新闻、事实性资料、公开数据等",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "搜索关键词" }
+        },
+        required: ["query"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "openmanus_web_automation",
+      description: "浏览器自动化/网页抓取，支持登录、点击、滚动、批量抓取结构化数据等复杂交互",
+      parameters: {
+        type: "object",
+        properties: {
+          task_description: { type: "string", description: "详细的任务描述" },
+          url: { type: "string", description: "目标网页URL（可选）" }
+        },
+        required: ["task_description"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "openmanus_code_execution",
+      description: "执行Python代码进行数据分析、计算、文件处理等",
+      parameters: {
+        type: "object",
+        properties: {
+          task_description: { type: "string", description: "详细的任务描述" },
+          code_type: {
+            type: "string",
+            description: "代码类型：data_analysis、file_processing、calculation、visualization",
+            enum: ["data_analysis", "file_processing", "calculation", "visualization"]
+          }
+        },
+        required: ["task_description"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "openmanus_file_operations",
+      description: "文件读写/编辑/格式转换等本地或远程文件操作",
+      parameters: {
+        type: "object",
+        properties: {
+          task_description: { type: "string", description: "详细的任务描述" },
+          operation_type: {
+            type: "string",
+            description: "操作类型：read、write、edit、convert、delete",
+            enum: ["read", "write", "edit", "convert", "delete"]
+          }
+        },
+        required: ["task_description"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "openmanus_general_task",
+      description: "通用智能代理，适合多步骤规划或需要同时使用多种工具的复杂任务",
+      parameters: {
+        type: "object",
+        properties: {
+          task_description: { type: "string", description: "详细的任务描述" },
+          complexity: {
+            type: "string", 
+            description: "任务复杂度：simple、medium、complex",
+            enum: ["simple", "medium", "complex"]
+          }
+        },
+        required: ["task_description"]
+      }
+    }
+  }
+];
 
 // 页面上下文处理器
 class PageContextProcessor {
@@ -192,12 +306,33 @@ export async function POST(request: NextRequest) {
       messages, 
       model = 'deepseek-reasoner', 
       temperature = 0.7, 
-      max_tokens = 2000,
+      max_tokens = 2048,
       pageContext
     }: ChatRequest = await request.json();
 
+    console.log('🚀 收到聊天请求:', {
+      messagesCount: messages?.length,
+      model,
+      hasPageContext: !!pageContext
+    });
+
+    // 验证请求数据
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      return NextResponse.json(
+        { error: '无效的消息格式' },
+        { status: 400 }
+      );
+    }
+
+    // 检查 API 密钥
     if (!process.env.DEEPSEEK_API_KEY) {
-      return new Response('API密钥未配置', { status: 500 });
+      console.error('❌ DeepSeek API 密钥未配置');
+      return NextResponse.json({
+        message: '抱歉，AI 服务配置有误。',
+        messageId: Date.now().toString(),
+        error: 'API密钥未配置',
+        isSimulated: true
+      });
     }
 
     // 处理页面上下文
@@ -216,38 +351,40 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 系统消息 - 包含工具使用指导
-    const systemMessage = {
+    // 构建系统消息
+    const systemMessage: ChatMessage = {
       role: 'system',
       content: `你是一个有用的AI助手。你可以使用以下工具来帮助用户：
 
 可用工具：
 - get_weather: 城市天气查询（实时天气、空气质量、指数等）
-- web_search: 公共互联网关键词搜索，获取新闻、事实性资料、公开数据等，无需网页交互。
-- openmanus_web_automation: 浏览器自动化/网页抓取，支持登录、点击、滚动、批量抓取结构化数据等复杂交互。
+- web_search: 公共互联网关键词搜索，获取新闻、事实性资料、公开数据等
+- openmanus_web_automation: 浏览器自动化/网页抓取，支持登录、点击、滚动、批量抓取结构化数据等复杂交互
 - openmanus_code_execution: Python 代码执行（数据分析、计算、可视化、文件处理等）
 - openmanus_file_operations: 文件读写/编辑/格式转换等本地或远程文件操作
-- openmanus_general_task: 通用智能代理，适合多步骤规划或需要同时使用多种工具的复杂任务。
+- openmanus_general_task: 通用智能代理，适合多步骤规划或需要同时使用多种工具的复杂任务
 
 请根据用户的问题判断是否需要使用工具，并在你的推理过程中说明你的决策。如果需要使用工具，请调用相应的工具函数。
 
-${pageContext ? '\n\n' + PageContextProcessor.generateContextSystemMessage(pageContext) : ''}`
+对于OpenManus工具，如果任务比较复杂可能需要一些时间执行，请耐心等待任务完成。`
     };
 
-    // 创建流式响应
+    // 🔑 统一流式处理架构
     const encoder = new TextEncoder();
-    const stream = new ReadableStream({
+    
+    return new Response(new ReadableStream({
       async start(controller) {
-        let currentStage = 'reasoning'; // reasoning -> tool_execution -> final
         let messageId = `msg_${Date.now()}`;
         let reasoningContent = '';
         let finalContent = '';
-        let toolCalls: any[] = [];
-        let toolResults: any[] = [];
+        let toolCalls: ToolCall[] = [];
+        let pendingTasks: string[] = [];
 
         try {
-          // 第一阶段：获取推理和可能的工具调用
-          const initialResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
+          console.log('📤 发送DeepSeek请求（第一阶段 - 推理和工具调用）');
+          
+          // 第一阶段：DeepSeek推理，可能包含工具调用
+          const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -259,168 +396,29 @@ ${pageContext ? '\n\n' + PageContextProcessor.generateContextSystemMessage(pageC
       temperature,
       max_tokens,
               stream: true,
-              tools: [
-                {
-                  type: "function",
-                  function: {
-                    name: "get_weather",
-                    description: "获取指定城市的天气信息",
-                    parameters: {
-                      type: "object",
-                      properties: {
-                        location: { type: "string", description: "城市名称" },
-                        adm: { type: "string", description: "行政区域" }
-                      },
-                      required: ["location"]
-                    }
-                  }
-                },
-                {
-                  type: "function", 
-                  function: {
-                    name: "web_search",
-                    description: "公共互联网关键词搜索，获取新闻、事实性资料、公开数据等，无需网页交互。",
-                    parameters: {
-                      type: "object",
-                      properties: {
-                        query: { type: "string", description: "搜索关键词" }
-                      },
-                      required: ["query"]
-                    }
-                  }
-                },
-                {
-                  type: "function",
-                  function: {
-                    name: "openmanus_web_automation",
-                    description: "浏览器自动化/网页抓取，支持登录、点击、滚动、批量抓取结构化数据等复杂交互。",
-                    parameters: {
-                      type: "object",
-                      properties: {
-                        task_description: { type: "string", description: "详细的任务描述，例如：抓取某网站的产品信息、自动填写表单、下载文件等" },
-                        url: { type: "string", description: "目标网页URL（可选）" }
-                      },
-                      required: ["task_description"]
-                    }
-                  }
-                },
-                {
-                  type: "function",
-                  function: {
-                    name: "openmanus_code_execution",
-                    description: "执行Python代码进行数据分析、计算、文件处理等",
-                    parameters: {
-                      type: "object",
-                      properties: {
-                        task_description: { type: "string", description: "详细的任务描述，例如：分析CSV数据、生成图表、数据处理、算法实现等" },
-                        code_type: {
-                          type: "string",
-                          description: "代码类型：data_analysis（数据分析）、file_processing（文件处理）、calculation（计算）、visualization（可视化）",
-                          enum: ["data_analysis", "file_processing", "calculation", "visualization"]
-                        }
-                      },
-                      required: ["task_description"]
-                    }
-                  }
-                },
-                {
-                  type: "function",
-                  function: {
-                    name: "openmanus_file_operations",
-                    description: "文件操作，包括文件读写、编辑、格式转换等",
-                    parameters: {
-                      type: "object",
-                      properties: {
-                        task_description: { type: "string", description: "详细的任务描述，例如：编辑配置文件、转换文件格式、批量重命名等" },
-                        operation_type: {
-                          type: "string",
-                          description: "操作类型：read（读取）、write（写入）、edit（编辑）、convert（转换）",
-                          enum: ["read", "write", "edit", "convert"]
-                        }
-                      },
-                      required: ["task_description"]
-                    }
-                  }
-                },
-                {
-                  type: "function",
-                  function: {
-                    name: "openmanus_general_task",
-                    description: "通用智能代理，适合多步骤规划或需要同时使用多种工具的复杂任务。",
-                    parameters: {
-                      type: "object",
-                      properties: {
-                        task_description: { type: "string", description: "详细的任务描述，OpenManus将自动分析并执行" },
-                        complexity: {
-                          type: "string",
-                          description: "任务复杂度：simple（简单）、medium（中等）、complex（复杂）",
-                          enum: ["simple", "medium", "complex"]
-                        }
-                      },
-                      required: ["task_description"]
-                    }
-                  }
-                }
-              ]
-            }),
+              tools: TOOL_DEFINITIONS
+            })
           });
 
-          if (!initialResponse.ok) {
-            throw new Error(`API 错误: ${initialResponse.status}`);
+          if (!response.ok) {
+            throw new Error(`DeepSeek API错误: ${response.status}`);
           }
 
-          const reader = initialResponse.body?.getReader();
-          if (!reader) {
-            throw new Error('无法读取响应流');
-          }
+          // 处理流式响应
+          const reader = response.body?.getReader();
+          if (!reader) throw new Error('无法获取响应流');
 
-          let buffer = '';
-
-          // 处理初始流式响应
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
 
-            buffer += new TextDecoder().decode(value);
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
+            const chunk = new TextDecoder().decode(value);
+            const lines = chunk.split('\n').filter(line => line.trim() !== '');
 
             for (const line of lines) {
               if (line.startsWith('data: ')) {
                 const data = line.slice(6);
-                if (data === '[DONE]') {
-                  // 第一阶段完成
-                  if (toolCalls.length > 0) {
-                    // 有工具调用，进入工具执行阶段
-                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-                      type: 'tool_decision',
-                      reasoning_content: reasoningContent,
-                      tool_calls: toolCalls,
-                      messageId
-                    })}\n\n`));
-                    
-                    currentStage = 'tool_execution';
-                  } else {
-                    // 无工具调用，发送完成信号
-                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-                      type: 'done',
-                      reasoning_content: reasoningContent,
-                      final_content: finalContent,
-                      messageId
-                    })}\n\n`));
-                    
-                    // 使用 setTimeout 延迟关闭，确保所有数据都已发送
-                    setTimeout(() => {
-                      try {
-                        controller.close();
-                      } catch (e) {
-                        console.log('Controller already closed');
-                      }
-                    }, 100);
-                    return;
-                  }
-                  break;
-    }
+                if (data === '[DONE]') continue;
 
     try {
                   const parsed = JSON.parse(data);
@@ -431,30 +429,22 @@ ${pageContext ? '\n\n' + PageContextProcessor.generateContextSystemMessage(pageC
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({
                       type: 'reasoning',
                       content: delta.reasoning_content,
-                      full_reasoning: reasoningContent,
                       messageId
                     })}\n\n`));
                   } else if (delta?.content) {
-                    // 收集最终内容
                     finalContent += delta.content;
-                    // 立即流式发送内容
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-                      type: 'final_content',
+                      type: 'content',
                       content: delta.content,
-                      full_content: finalContent,
                       messageId
                     })}\n\n`));
                   } else if (delta?.tool_calls) {
-                    // 收集工具调用 - 处理流式分片数据
+                    // 处理工具调用（累积分片数据）
                     delta.tool_calls.forEach((toolCall: any) => {
-                      // DeepSeek可能发送不完整的分片，我们需要更灵活的处理
-                      if (!toolCall) return;
-                      
-                      // 如果有index，说明是分片数据
                       if (typeof toolCall.index === 'number') {
                         const index = toolCall.index;
                         
-                        // 确保工具调用数组有足够的位置
+                        // 确保数组长度足够
                         while (toolCalls.length <= index) {
                           toolCalls.push({
                             id: `temp_${index}`,
@@ -463,42 +453,13 @@ ${pageContext ? '\n\n' + PageContextProcessor.generateContextSystemMessage(pageC
                           });
                         }
                         
-                        // 更新分片数据
-                        if (toolCall.id) {
-                          toolCalls[index].id = toolCall.id;
-                        }
-                        if (toolCall.type) {
-                          toolCalls[index].type = toolCall.type;
-                        }
+                        // 累积工具调用数据
+                        if (toolCall.id) toolCalls[index].id = toolCall.id;
                         if (toolCall.function?.name) {
                           toolCalls[index].function.name = toolCall.function.name;
                         }
                         if (toolCall.function?.arguments) {
                           toolCalls[index].function.arguments += toolCall.function.arguments;
-                        }
-                      } else {
-                        // 处理完整的工具调用（旧逻辑保留）
-                        if (!toolCall.id || !toolCall.function?.name) {
-                          console.warn('忽略格式不正确的工具调用:', toolCall);
-                          return;
-                        }
-                        
-                        const existingIndex = toolCalls.findIndex(tc => tc.id === toolCall.id);
-                        if (existingIndex >= 0) {
-                          // 更新现有工具调用
-                          if (toolCall.function?.arguments) {
-                            toolCalls[existingIndex].function.arguments += toolCall.function.arguments;
-                          }
-                        } else {
-                          // 新的工具调用
-                          toolCalls.push({
-                            id: toolCall.id,
-                            type: toolCall.type || 'function',
-                            function: {
-                              name: toolCall.function.name,
-                              arguments: toolCall.function.arguments || ''
-                            }
-                          });
                         }
                       }
                     });
@@ -510,46 +471,18 @@ ${pageContext ? '\n\n' + PageContextProcessor.generateContextSystemMessage(pageC
             }
           }
 
-          // 如果有工具调用，执行工具
-          if (currentStage === 'tool_execution' && toolCalls.length > 0) {
-            // 过滤并验证工具调用
-            let validToolCalls = toolCalls.filter(toolCall => {
-              // 检查基本结构
-              if (!toolCall?.function?.name) {
-                console.warn('过滤掉无效的工具调用（缺少名称）:', toolCall);
-                return false;
-              }
-              
-              // 检查是否有有效的ID
-              if (!toolCall.id || toolCall.id.startsWith('temp_')) {
-                console.warn('过滤掉无效的工具调用（临时ID）:', toolCall);
-                return false;
-              }
-              
-              return true;
-            });
+          // 第二阶段：如果有工具调用，执行工具
+          if (toolCalls.length > 0) {
+            console.log('🛠️ 检测到工具调用，开始执行:', toolCalls.map(t => t.function.name));
+            
+            // 过滤有效的工具调用
+            const validToolCalls = toolCalls.filter(tc => 
+              tc.function.name && 
+              tc.function.arguments && 
+              !tc.id.startsWith('temp_')
+            );
 
-            // 工具调用次数限制 – 最多5个
-            if (validToolCalls.length > 5) {
-              console.warn(`检测到 ${validToolCalls.length} 个工具调用，已截断到 5 个`);
-              validToolCalls = validToolCalls.slice(0, 5);
-            }
-
-            if (validToolCalls.length === 0) {
-              console.warn('没有有效的工具调用，跳过工具执行阶段');
-              // 直接完成，无工具调用
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-                type: 'done',
-                reasoning_content: reasoningContent,
-                final_content: finalContent,
-                messageId
-              })}\n\n`));
-              controller.close();
-              return;
-            }
-
-            console.log('有效的工具调用:', validToolCalls);
-
+            if (validToolCalls.length > 0) {
             // 发送工具执行开始信号
             controller.enqueue(encoder.encode(`data: ${JSON.stringify({
               type: 'tool_execution',
@@ -557,552 +490,301 @@ ${pageContext ? '\n\n' + PageContextProcessor.generateContextSystemMessage(pageC
               messageId
             })}\n\n`));
 
-            // 执行所有工具调用
-            const toolExecutionResults = [];
-            for (const toolCall of validToolCalls) {
-              try {
-                // 验证工具调用完整性
-                if (!toolCall?.function?.name) {
-                  console.error('工具调用缺少必要信息:', toolCall);
-                  continue;
-                }
+              // 🔑 统一调用 /api/tools 执行所有工具
+              const toolResults = await executeTools(validToolCalls, controller, encoder, messageId);
                 
-                console.log(`执行工具: ${toolCall.function.name}`, toolCall);
-                const toolResult = await executeToolCall(toolCall);
+              // 检查是否有pending的OpenManus任务
+              const pendingOpenManusTasks = extractPendingTasks(toolResults);
+              
+              if (pendingOpenManusTasks.length > 0) {
+                console.log('⏳ 检测到pending OpenManus任务:', pendingOpenManusTasks);
                 
-                toolExecutionResults.push({
-                  tool_call_id: toolCall.id,
-                  role: 'tool',
-                  content: JSON.stringify(toolResult)
-                });
-                
-                // 发送工具结果
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-                  type: 'tool_result',
-                  tool_call_id: toolCall.id,
-                  tool_name: toolCall.function.name,
-                  result: toolResult,
-                  messageId
-                })}\n\n`));
-                
-              } catch (error) {
-                console.error(`工具执行失败: ${toolCall?.function?.name || 'unknown'}`, error);
-                
-                // 确保有有效的工具调用ID
-                const callId = toolCall?.id || `error_${Date.now()}`;
-                
-                toolExecutionResults.push({
-                  tool_call_id: callId,
-                  role: 'tool',
-                  content: JSON.stringify({
-                    error: error instanceof Error ? error.message : '工具执行失败',
-                    success: false,
-                    tool_name: toolCall?.function?.name || 'unknown'
-                  })
-                });
-                
-                // 发送错误结果
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-                  type: 'tool_result',
-                  tool_call_id: callId,
-                  tool_name: toolCall?.function?.name || 'unknown',
-                  result: {
-                    error: error instanceof Error ? error.message : '工具执行失败',
-                    success: false
-                  },
-                  messageId
-                })}\n\n`));
-              }
-            }
-
-            // ----------------新增：如果存在 OpenManus 异步任务未完成，则暂停推理----------------
-            const pendingOpenManusTasks: string[] = [];
-            for (const tr of toolExecutionResults) {
-              try {
-                const parsed = JSON.parse(tr.content);
-                // 1) 顶层直接带 task_id（旧格式）
-                if (parsed && parsed.task_id && parsed.status && parsed.status !== 'completed') {
-                  pendingOpenManusTasks.push(parsed.task_id);
-                }
-                // 2) 嵌套在 result 数组里（executeOpenManusTools 返回格式）
-                else if (Array.isArray(parsed.result)) {
-                  for (const inner of parsed.result) {
-                    let innerObj: any = inner;
-                    if (typeof inner?.content === 'string') {
-                      try { innerObj = JSON.parse(inner.content); } catch {}
-                    }
-                    if (innerObj && innerObj.task_id && innerObj.status && innerObj.status !== 'completed') {
-                      pendingOpenManusTasks.push(innerObj.task_id);
-                    }
-                  }
-                }
-              } catch {
-                // ignore
-              }
-            }
-            if (pendingOpenManusTasks.length > 0) {
-              // 向客户端发送暂停信号，并附带未完成的 task_id 列表
+                // 发送pending信号
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({
                 type: 'pending_openmanus',
                 task_ids: pendingOpenManusTasks,
-                tool_calls: toolCalls,
-                tool_results: toolExecutionResults,
-                reasoning_content: reasoningContent,
-                final_content: finalContent,
                 messageId
               })}\n\n`));
 
-              // 结束当前流。待前端监听任务完成后再重新触发下一轮推理。
-              setTimeout(() => {
-                try {
-                  controller.close();
-                } catch (e) {
-                  console.log('Controller already closed');
-                }
-              }, 100);
-              return;
+                // 启动任务监控
+                monitorPendingTasks(pendingOpenManusTasks, processedMessages, validToolCalls, toolResults, controller, encoder, messageId);
+                return; // 暂停，等待任务完成
+              }
+
+              // 第三阶段：将工具结果发回DeepSeek继续推理
+              await continueWithToolResults(processedMessages, validToolCalls, toolResults, controller, encoder, messageId);
             }
-            // ----------------新增逻辑结束----------------
-
-            // 第二阶段：工具结果整合和最终回复
-            const finalResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-        },
-              body: JSON.stringify({
-                model,
-                messages: [
-                  systemMessage,
-                  ...processedMessages,
-                  {
-                    role: 'assistant',
-                    content: finalContent,
-                    tool_calls: toolCalls
-                  },
-                  ...toolExecutionResults
-                ],
-                temperature,
-                max_tokens,
-                stream: true
-              }),
-            });
-
-            if (!finalResponse.ok) {
-              throw new Error(`最终响应API错误: ${finalResponse.status}`);
-            }
-
-            const finalReader = finalResponse.body?.getReader();
-            if (!finalReader) {
-              throw new Error('无法读取最终响应流');
-            }
-
-            let finalBuffer = '';
-            let postToolReasoning = '';
-            let finalFinalContent = '';
-
-            while (true) {
-              const { done, value } = await finalReader.read();
-              if (done) break;
-
-              finalBuffer += new TextDecoder().decode(value);
-              const lines = finalBuffer.split('\n');
-              finalBuffer = lines.pop() || '';
-
-              for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                  const data = line.slice(6);
-                  if (data === '[DONE]') {
-                    // 全部完成
+          } else {
+            // 没有工具调用，直接完成
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({
                       type: 'done',
                       reasoning_content: reasoningContent,
-                      post_tool_reasoning: postToolReasoning,
-                      final_content: finalFinalContent,
-                      tool_calls: toolCalls,
-                      tool_results: toolExecutionResults,
+              final_content: finalContent,
                       messageId
                     })}\n\n`));
-                    // 使用 setTimeout 延迟关闭，确保所有数据都已发送
-                    setTimeout(() => {
-                      try {
-                        controller.close();
-                      } catch (e) {
-                        console.log('Controller already closed');
-                      }
-                    }, 100);
-                    return;
-                  }
-
-                  try {
-                    const parsed = JSON.parse(data);
-                    const delta = parsed.choices?.[0]?.delta;
-
-                    if (delta?.reasoning_content) {
-                      postToolReasoning += delta.reasoning_content;
-                      controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-                        type: 'reasoning',
-                        content: delta.reasoning_content,
-                        full_reasoning: postToolReasoning,
-                        phase: 'post_tool',
-                        messageId
-                      })}\n\n`));
-                    } else if (delta?.content) {
-                      finalFinalContent += delta.content;
-                      controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-                        type: 'final_content',
-                        content: delta.content,
-                        full_content: finalFinalContent,
-                        messageId
-                      })}\n\n`));
-                    }
-                  } catch (e) {
-                    console.error('解析最终响应错误:', e);
-                  }
-                }
-              }
-            }
           }
-
         } catch (error) {
-          console.error('流式处理错误:', error);
-          try {
+          console.error('❌ 聊天处理错误:', error);
             controller.enqueue(encoder.encode(`data: ${JSON.stringify({
               type: 'error',
               error: error instanceof Error ? error.message : '处理失败',
               messageId
             })}\n\n`));
-          } catch (e) {
-            console.error('发送错误消息失败:', e);
-          }
-          
-          // 安全关闭 controller
-          setTimeout(() => {
-            try {
+        } finally {
               controller.close();
-            } catch (e) {
-              console.log('Controller already closed');
             }
-          }, 100);
         }
+    }), {
+      headers: {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive'
       }
     });
 
-    return new Response(stream, {
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-      },
-    });
-
   } catch (error) {
-    console.error('API错误:', error);
-    return new Response('服务器错误', { status: 500 });
+    console.error('❌ API错误:', error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : '服务器内部错误' },
+      { status: 500 }
+    );
   }
 }
 
-// 工具执行函数
-async function executeToolCall(toolCall: any) {
+// 🔑 统一工具执行函数
+async function executeTools(toolCalls: ToolCall[], controller: any, encoder: any, messageId: string) {
   try {
-    console.log('执行工具调用:', toolCall);
+    console.log('📤 调用统一工具API执行工具');
     
-    if (!toolCall || !toolCall.function || !toolCall.function.name) {
-      throw new Error('工具调用格式不正确');
+    const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/tools`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tool_calls: toolCalls })
+    });
+
+    if (!response.ok) {
+      throw new Error(`工具API调用失败: ${response.status}`);
     }
 
-    switch (toolCall.function.name) {
-      case 'get_weather':
-        return await executeWeatherTool(toolCall.function.arguments);
-      case 'web_search':
-        return await executeWebSearchTool(toolCall.function.arguments);
-      case 'openmanus_web_automation':
-      case 'openmanus_code_execution':
-      case 'openmanus_file_operations':
-      case 'openmanus_general_task':
-        return await executeOpenManusTools(toolCall);
-      default:
-        throw new Error(`未知工具: ${toolCall.function.name}`);
+    const data = await response.json();
+    
+    if (!data.success) {
+      throw new Error(`工具执行失败: ${data.error}`);
     }
+
+    // 发送工具结果
+    data.results.forEach((result: any) => {
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+        type: 'tool_result',
+        tool_call_id: result.tool_call_id,
+        result: JSON.parse(result.content),
+        messageId
+      })}\n\n`));
+    });
+
+    console.log('✅ 所有工具执行完成');
+    return data.results;
+    
   } catch (error) {
-    console.error('工具执行错误:', error);
+    console.error('❌ 工具执行错误:', error);
     throw error;
   }
 }
 
-// 实现实际的天气工具
-async function executeWeatherTool(argumentsStr: string) {
-  try {
-    console.log('天气工具参数:', argumentsStr);
-    
-    let args;
-    if (!argumentsStr || argumentsStr.trim() === '') {
-      return {
-        success: false,
-        error: '缺少位置参数，请提供要查询的城市名称',
-        location: 'unknown'
-      };
-    }
-    
-    if (typeof argumentsStr === 'string') {
-      try {
-        args = JSON.parse(argumentsStr);
-      } catch (parseError) {
-        console.error('参数解析失败:', parseError);
-        return {
-          success: false,
-          error: `参数格式错误: ${argumentsStr}`,
-          location: 'unknown'
-        };
-      }
-    } else {
-      args = argumentsStr;
-    }
-    
-    const { location } = args;
-    
-    if (!location || typeof location !== 'string') {
-      return {
-        success: false,
-        error: '位置参数无效，请提供有效的城市名称',
-        location: location || 'unknown'
-      };
-    }
-    console.log('查询天气:', { location });
-    
-    const QWEATHER_TOKEN = process.env.QWEATHER_API_KEY;
-    if (!QWEATHER_TOKEN) {
-      return {
-        success: false,
-        error: '和风天气API密钥未配置',
-        location
-      };
-    }
-    
+// 🔑 提取pending任务
+function extractPendingTasks(toolResults: any[]): string[] {
+  const pendingTasks: string[] = [];
+  
+  toolResults.forEach(result => {
     try {
-      // 1. 获取城市位置信息
-      const locationResponse = await fetch(
-        `https://geoapi.qweather.com/v2/city/lookup?location=${encodeURIComponent(location)}&key=${QWEATHER_TOKEN}&lang=zh`
-      );
-      
-      if (!locationResponse.ok) {
-        throw new Error(`位置查询失败: ${locationResponse.status}`);
+      const content = JSON.parse(result.content);
+      if (content.task_id && content.status === 'pending') {
+        pendingTasks.push(content.task_id);
       }
+    } catch (e) {
+      // 忽略解析错误
+    }
+  });
+  
+  return pendingTasks;
+}
+
+// 🔑 监控pending任务
+async function monitorPendingTasks(
+  taskIds: string[], 
+  messages: any[], 
+  toolCalls: ToolCall[], 
+  toolResults: any[],
+  controller: any, 
+  encoder: any, 
+  messageId: string
+) {
+  console.log('🔍 开始监控pending任务:', taskIds);
+    
+  const checkInterval = setInterval(async () => {
+    try {
+      let allCompleted = true;
+      const updatedResults = [...toolResults];
       
-      const locationData = await locationResponse.json();
-      console.log('位置查询结果:', locationData);
+      for (let i = 0; i < taskIds.length; i++) {
+        const taskId = taskIds[i];
+        
+        // 使用专门的任务状态查询端点
+        const statusResponse = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/openmanus/status?task_id=${taskId}`);
+        const statusData = await statusResponse.json();
+        
+        if (statusData.success && statusData.status === 'completed') {
+          console.log(`✅ 任务完成: ${taskId}`);
+          
+          // 更新工具结果
+          const resultIndex = updatedResults.findIndex(r => {
+            const content = JSON.parse(r.content);
+            return content.task_id === taskId;
+          });
       
-      if (!locationData.location || locationData.location.length === 0) {
-        return {
-          success: false,
-          error: `未找到城市: ${location}`,
-          location
+          if (resultIndex !== -1) {
+            updatedResults[resultIndex] = {
+              ...updatedResults[resultIndex],
+              content: JSON.stringify({
+                success: true,
+                task_id: taskId,
+                status: 'completed',
+                result: statusData.result,
+                message: '任务已完成'
+              })
         };
       }
-      
-      const cityInfo = locationData.location[0];
-      
-      // 2. 获取天气信息
-      const weatherResponse = await fetch(
-        `https://devapi.qweather.com/v7/weather/now?location=${cityInfo.id}&key=${QWEATHER_TOKEN}&lang=zh`
-      );
-      
-      if (!weatherResponse.ok) {
-        throw new Error(`天气查询失败: ${weatherResponse.status}`);
-      }
-      
-      const weatherData = await weatherResponse.json();
-      console.log('天气查询结果:', weatherData);
-      
-      if (weatherData.code !== '200') {
-        return {
-          success: false,
-          error: `天气查询失败: ${weatherData.code}`,
-          location
-        };
-      }
-      
-      const weather = weatherData.now;
-      return {
-        success: true,
-        location: `${cityInfo.name}, ${cityInfo.adm1}`,
-        data: {
-          temperature: weather.temp,
-          condition: weather.text,
-          humidity: weather.humidity,
-          windDirection: weather.windDir,
-          windSpeed: weather.windSpeed,
-          pressure: weather.pressure,
-          visibility: weather.vis,
-          updateTime: weather.obsTime
+        } else if (statusData.status === 'failed') {
+          console.log(`❌ 任务失败: ${taskId}`);
+          // 标记为失败但继续
+        } else {
+          allCompleted = false;
         }
-      };
-      
-    } catch (apiError) {
-      console.error('天气API调用错误:', apiError);
-      return {
-        success: false,
-        error: '天气服务暂时不可用',
-        location
-      };
-    }
-
-  } catch (error) {
-    console.error('天气工具执行错误:', error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : '参数解析失败',
-      location: 'unknown'
-    };
-  }
-}
-
-async function executeWebSearchTool(argumentsStr: string) {
-  try {
-    console.log('搜索工具参数:', argumentsStr);
-    
-    let args;
-    if (!argumentsStr || argumentsStr.trim() === '') {
-      return {
-        success: false,
-        error: '缺少搜索关键词，请提供要搜索的内容',
-        query: 'unknown'
-      };
-    }
-    
-    if (typeof argumentsStr === 'string') {
-      try {
-        args = JSON.parse(argumentsStr);
-      } catch (parseError) {
-        console.error('搜索参数解析失败:', parseError);
-        return {
-          success: false,
-          error: `参数格式错误: ${argumentsStr}`,
-          query: 'unknown'
-        };
       }
-    } else {
-      args = argumentsStr;
+      
+      if (allCompleted) {
+        clearInterval(checkInterval);
+        console.log('🎉 所有OpenManus任务完成，继续DeepSeek推理');
+        
+        // 继续DeepSeek推理
+        await continueWithToolResults(messages, toolCalls, updatedResults, controller, encoder, messageId);
     }
-    
-    const { query } = args;
-    
-    if (!query || typeof query !== 'string') {
-      return {
-        success: false,
-        error: '搜索关键词无效，请提供有效的搜索内容',
-        query: query || 'unknown'
-      };
-    }
-    console.log('执行搜索:', query);
-    
-    // 调用现有的搜索API
-    const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/tools`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        tool_calls: [{
-          id: `search_${Date.now()}`,
-          type: 'function',
-          function: {
-            name: 'web_search',
-            arguments: JSON.stringify({ query })
-          }
-        }]
-      })
-    });
-    
-    if (!response.ok) {
-      throw new Error(`搜索API调用失败: ${response.status}`);
-    }
-    
-    const data = await response.json();
-    
-    if (!data.success || !data.results || data.results.length === 0) {
-      return {
-        success: false,
-        error: '搜索失败或无结果',
-        query
-      };
-    }
-    
-    // 提取搜索结果
-    const toolResult = data.results[0];
-    if (toolResult.role === 'tool') {
-      const resultData = JSON.parse(toolResult.content);
-      return {
-        success: true,
-        query,
-        results: resultData.results || [],
-        totalResults: resultData.totalResults || 0
-      };
-    }
-    
-    return {
-      success: false,
-      error: '搜索结果格式错误',
-      query
-    };
-    
   } catch (error) {
-    console.error('搜索工具执行错误:', error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : '搜索失败',
-      query: 'unknown'
-    };
+      console.error('❌ 监控任务状态失败:', error);
+    }
+  }, 3000); // 每3秒检查一次
+  
+  // 超时保护（5分钟后强制完成）
+  setTimeout(() => {
+    clearInterval(checkInterval);
+    console.log('⏰ 任务监控超时，强制完成');
+  }, 300000);
   }
-}
 
-async function executeOpenManusTools(toolCall: any) {
-  try {
-    console.log('执行OpenManus工具:', toolCall);
+// 🔑 带工具结果继续DeepSeek推理
+async function continueWithToolResults(
+  messages: any[], 
+  toolCalls: ToolCall[], 
+  toolResults: any[],
+  controller: any, 
+  encoder: any, 
+  messageId: string
+) {
+      try {
+    console.log('🔄 使用工具结果继续DeepSeek推理');
     
-    // 调用现有的OpenManus API
-    const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/tools`, {
+    // 构建完整的消息历史
+    const fullMessages = [
+      ...messages,
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: toolCalls
+      },
+      ...toolResults
+    ];
+    
+    // 调用DeepSeek继续推理
+    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+      },
       body: JSON.stringify({
-        tool_calls: [toolCall]
+        model: 'deepseek-reasoner',
+        messages: fullMessages,
+        temperature: 0.7,
+        max_tokens: 2048,
+        stream: true
       })
     });
     
     if (!response.ok) {
-      throw new Error(`OpenManus API调用失败: ${response.status}`);
+      throw new Error(`DeepSeek API错误: ${response.status}`);
     }
     
-    const data = await response.json();
+    // 处理续写的流式响应
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('无法获取响应流');
+
+    let finalContent = '';
     
-    if (!data.success) {
-      return {
-        success: false,
-        error: data.error || 'OpenManus执行失败',
-        tool: toolCall.function.name
-      };
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = new TextDecoder().decode(value);
+      const lines = chunk.split('\n').filter(line => line.trim() !== '');
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6);
+          if (data === '[DONE]') continue;
+
+          try {
+            const parsed = JSON.parse(data);
+            const delta = parsed.choices?.[0]?.delta;
+
+            if (delta?.content) {
+              finalContent += delta.content;
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                type: 'content',
+                content: delta.content,
+                messageId
+              })}\n\n`));
+            }
+          } catch (e) {
+            console.error('解析续写响应错误:', e);
     }
+        }
+      }
+    }
+
+    // 发送完成信号
+    controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+      type: 'done',
+      final_content: finalContent,
+      messageId
+    })}\n\n`));
     
-    return {
-      success: true,
-      tool: toolCall.function.name,
-      result: data.results
-    };
+    console.log('✅ DeepSeek推理完成');
     
   } catch (error) {
-    console.error('OpenManus工具执行错误:', error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'OpenManus执行失败',
-      tool: toolCall.function.name
-    };
+    console.error('❌ 续写DeepSeek推理失败:', error);
+    controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+      type: 'error',
+      error: error instanceof Error ? error.message : '续写失败',
+      messageId
+    })}\n\n`));
   }
 }
 
 export async function GET() {
-  return new Response(JSON.stringify({ 
+  return NextResponse.json({ 
     message: '聊天API运行正常',
-    timestamp: new Date().toISOString()
-  }), {
-    headers: { 'Content-Type': 'application/json' }
+    timestamp: new Date().toISOString(),
+    supportedModels: ['deepseek-reasoner'],
+    features: ['工具调用', '流式响应', 'OpenManus集成']
   });
 }
