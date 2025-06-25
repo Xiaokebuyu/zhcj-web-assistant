@@ -80,3 +80,5 @@ test-openmanus-integration.js
 openmanus-venv/
 
 # OpenManus/config/config.toml配置文件的忽略规则
+/logs/
+OpenManus/config/config.toml
