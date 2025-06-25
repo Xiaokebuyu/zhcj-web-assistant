@@ -1026,24 +1026,34 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                   }
                   break;
 
-                case 'content':
-                  // 处理最终内容
-                  if (!hasAddedMessage) {
-                    currentMessage.content = parsed.content || '';
-                    setMessages(prev => [...prev, currentMessage]);
-                    hasAddedMessage = true;
-                  } else {
-                  setMessages(prev => prev.map(msg => 
-                      msg.id === currentMessage.id 
-                      ? { 
-                          ...msg, 
-                            content: msg.content + (parsed.content || ''),
-                            messageType: 'assistant'
-                        }
-                      : msg
-                  ));
-                  }
+                case 'content': {
+                  // 使用当前阶段的 messageId 来生成唯一的最终回复 ID，避免与工具调用前的回复冲突
+                  // 不能直接使用服务器返回的 messageId（整次对话固定），否则在工具调用后续阶段会与之前的 "最终回复" 冲突
+                  const finalId = currentMessage.id + '_final';
+                  setMessages(prev => {
+                    const idx = prev.findIndex(m => m.id === finalId);
+                    if (idx === -1) {
+                      return [
+                        ...prev,
+                        {
+                          id: finalId,
+                          role: 'assistant',
+                          content: parsed.content || '',
+                          timestamp: new Date(),
+                          messageType: 'assistant_final'
+                        } as ReasoningChatMessage
+                      ];
+                    } else {
+                      const updated = [...prev];
+                      updated[idx] = {
+                        ...updated[idx],
+                        content: (updated[idx].content || '') + (parsed.content || '')
+                      } as ReasoningChatMessage;
+                      return updated;
+                    }
+                  });
                   break;
+                }
 
                 case 'tool_execution':
                   console.log('🛠️ 工具执行开始:', parsed.tool_calls);
@@ -1074,6 +1084,16 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                 };
                   
                   setMessages(prev => [...prev, toolMessage]);
+                  
+                  // 为第二阶段推理准备新的思考容器
+                  hasAddedMessage = false;
+                  currentMessage = {
+                    id: `msg_${Date.now()}`,
+                    role: 'assistant',
+                    content: '',
+                    timestamp: new Date(),
+                    messageType: 'assistant'
+                  } as ReasoningChatMessage;
                   
                   setToolProgress({
                     isToolCalling: true,
@@ -1124,16 +1144,44 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                   // 设置pending任务
                   setPendingOpenManusTasks(parsed.task_ids || []);
                   
-                  // 更新工具执行状态
+                  // 更新工具执行状态，并写入占位结果（含 task_id），以便前端立即启动日志流
                   setMessages(prev => prev.map(msg => {
                     if (msg.toolExecution && msg.toolExecution.id === parsed.messageId) {
+                      // 复制现有结果数组
+                      const updatedResults = [...msg.toolExecution.results];
+                      (parsed.task_ids || []).forEach((taskId: string) => {
+                        // 检查是否已存在相同 task_id 的结果
+                        const exists = updatedResults.some(r => {
+                          try {
+                            const obj = typeof r.content === 'string' ? JSON.parse(r.content) : r.content;
+                            return obj && obj.task_id === taskId;
+                          } catch {
+                            return false;
+                          }
+                        });
+                        if (!exists) {
+                          updatedResults.push({
+                            tool_call_id: `pending_${taskId}`,
+                            role: 'tool',
+                            content: JSON.stringify({
+                              success: true,
+                              task_id: taskId,
+                              status: 'pending',
+                              message: '任务已创建',
+                              timestamp: new Date().toISOString()
+                            })
+                          });
+                        }
+                      });
+
                       return {
                         ...msg,
                         toolExecution: {
                           ...msg.toolExecution,
-                          status: 'pending'
+                          status: 'pending',
+                          results: updatedResults
                         }
-                      };
+                      } as ReasoningChatMessage;
                     }
                     return msg;
                   }));
@@ -1145,8 +1193,8 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
                     totalSteps: 2
                   });
                   
-                                     // 🔑 启动任务监控
-                   startTaskMonitoring(parsed.task_ids || [], parsed.messageId || '');
+                  // 🔑 启动任务监控
+                  startTaskMonitoring(parsed.task_ids || [], parsed.messageId || '');
                   break;
 
                 case 'done':

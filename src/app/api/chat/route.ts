@@ -21,14 +21,7 @@ interface ChatMessage {
   tool_call_id?: string;
 }
 
-interface ToolDefinition {
-  type: string;
-  function: {
-    name: string;
-    description: string;
-    parameters: Record<string, unknown>;
-  };
-}
+// 移除未使用的接口定义
 
 interface ToolCall {
   id: string;
@@ -37,6 +30,22 @@ interface ToolCall {
     name: string;
     arguments: string;
   };
+}
+
+// Helper 函数
+async function parseStream(
+  reader: ReadableStreamDefaultReader,
+  onLine: (line: string) => void
+) {
+  let buf = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += new TextDecoder().decode(value);
+    const lines = buf.split('\n');
+    buf = lines.pop() || '';
+    lines.forEach(l => l.startsWith('data: ') && onLine(l.slice(6)));
+  }
 }
 
 // 工具定义
@@ -144,6 +153,31 @@ const TOOL_DEFINITIONS = [
   }
 ];
 
+// 👇 新增：统一的系统提示词常量，确保每次调用 DeepSeek 都能携带相同的系统级约束
+const SYSTEM_PROMPT = `你是一个有用的AI助手。你可以使用以下工具来帮助用户：
+                     如果对工具调用结果不满意可以尝试重复调用工具（最多不超过三次），直到得到满意的结果为止。
+
+可用工具：
+- get_weather: 城市天气查询（实时天气、空气质量、指数等）
+- web_search: 公共互联网关键词搜索，获取新闻、事实性资料、公开数据等
+- openmanus_web_automation: 浏览器自动化/网页抓取，支持登录、点击、滚动、批量抓取结构化数据等复杂交互
+- openmanus_code_execution: Python 代码执行（数据分析、计算、可视化、文件处理等）
+- openmanus_file_operations: 文件读写/编辑/格式转换等本地或远程文件操作
+- openmanus_general_task: 通用智能代理，适合多步骤规划或需要同时使用多种工具的复杂任务
+
+请根据用户的问题判断是否需要使用工具，并在你的推理过程中说明你的决策。如果需要使用工具，请调用相应的工具函数。
+
+对于OpenManus工具，如果任务比较复杂可能需要一些时间执行，请耐心等待任务完成。
+
+## 工具调用处理指导
+当收到工具返回的结果时，请严格遵循以下原则：
+1. 忠实地润色和报告调用结果：清晰、准确地解释工具返回的信息，不要添加工具结果中没有的内容
+2. 保持客观性：如实反映工具执行的成功、失败或部分完成状态
+3. 提供相关建议：基于工具结果的实际内容，给出有建设性的建议或后续行动指导
+4. 整合多个工具结果：如果使用了多个工具，请综合分析结果并给出完整的回答
+5. 错误处理：如果工具执行失败，请说明可能的原因并建议替代方案
+6. 根据用户问题，从工具返回中提取核心内容，并根据核心内容回答用户问题`;
+
 // 页面上下文处理器
 class PageContextProcessor {
   // 生成页面上下文的系统消息
@@ -248,57 +282,7 @@ class PageContextProcessor {
   }
 }
 
-// 工具调用结果解析器
-class ToolResultProcessor {
-  // 检测消息中是否包含工具调用结果
-  static containsToolResults(messages: ChatMessage[]): boolean {
-    return messages.some(msg => 
-      msg.role === 'tool' || 
-      (msg.role === 'assistant' && msg.content === '')
-    );
-  }
-
-  // 从工具调用结果中提取搜索来源
-  static extractSearchSources(messages: ChatMessage[]): SearchResult[] {
-    const searchSources: SearchResult[] = [];
-    
-    messages.forEach(message => {
-      if (message.role === 'tool') {
-        try {
-          const toolData = JSON.parse(message.content);
-          
-          // 检查是否是搜索工具的结果
-          if (toolData.success && toolData.results && Array.isArray(toolData.results)) {
-            // 验证结果是否符合 SearchResult 格式
-            const validResults = toolData.results.filter((result: unknown) => 
-              result && 
-              typeof result === 'object' && 
-              result !== null &&
-              'name' in result &&
-              'url' in result &&
-              'snippet' in result &&
-              typeof (result as Record<string, unknown>).name === 'string' && 
-              typeof (result as Record<string, unknown>).url === 'string' && 
-              typeof (result as Record<string, unknown>).snippet === 'string'
-            );
-            
-            searchSources.push(...validResults);
-          }
-        } catch (e) {
-          // 忽略解析错误，继续处理其他消息
-          console.log('解析工具结果时出错:', e);
-        }
-      }
-    });
-    
-    // 去重并限制数量
-    const uniqueSources = searchSources.filter((source, index, self) => 
-      index === self.findIndex(s => s.url === source.url)
-    );
-    
-    return uniqueSources.slice(0, 10); // 最多返回10个来源
-  }
-}
+// 移除未使用的 ToolResultProcessor 类
 
 export async function POST(request: NextRequest) {
   try {
@@ -354,19 +338,7 @@ export async function POST(request: NextRequest) {
     // 构建系统消息
     const systemMessage: ChatMessage = {
       role: 'system',
-      content: `你是一个有用的AI助手。你可以使用以下工具来帮助用户：
-
-可用工具：
-- get_weather: 城市天气查询（实时天气、空气质量、指数等）
-- web_search: 公共互联网关键词搜索，获取新闻、事实性资料、公开数据等
-- openmanus_web_automation: 浏览器自动化/网页抓取，支持登录、点击、滚动、批量抓取结构化数据等复杂交互
-- openmanus_code_execution: Python 代码执行（数据分析、计算、可视化、文件处理等）
-- openmanus_file_operations: 文件读写/编辑/格式转换等本地或远程文件操作
-- openmanus_general_task: 通用智能代理，适合多步骤规划或需要同时使用多种工具的复杂任务
-
-请根据用户的问题判断是否需要使用工具，并在你的推理过程中说明你的决策。如果需要使用工具，请调用相应的工具函数。
-
-对于OpenManus工具，如果任务比较复杂可能需要一些时间执行，请耐心等待任务完成。`
+      content: SYSTEM_PROMPT
     };
 
     // 🔑 统一流式处理架构
@@ -374,11 +346,11 @@ export async function POST(request: NextRequest) {
     
     return new Response(new ReadableStream({
       async start(controller) {
-        let messageId = `msg_${Date.now()}`;
+        const messageId = `msg_${Date.now()}`;
         let reasoningContent = '';
         let finalContent = '';
-        let toolCalls: ToolCall[] = [];
-        let pendingTasks: string[] = [];
+        const toolCalls: ToolCall[] = [];
+        let keepOpen = false; // 如果存在pending任务保持流打开
 
         try {
           console.log('📤 发送DeepSeek请求（第一阶段 - 推理和工具调用）');
@@ -396,7 +368,8 @@ export async function POST(request: NextRequest) {
       temperature,
       max_tokens,
               stream: true,
-              tools: TOOL_DEFINITIONS
+              tools: TOOL_DEFINITIONS,
+              tool_choice: 'auto'
             })
           });
 
@@ -408,68 +381,61 @@ export async function POST(request: NextRequest) {
           const reader = response.body?.getReader();
           if (!reader) throw new Error('无法获取响应流');
 
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
+          await parseStream(reader, line => {
+            if (line === '[DONE]') return;
 
-            const chunk = new TextDecoder().decode(value);
-            const lines = chunk.split('\n').filter(line => line.trim() !== '');
+            try {
+              const parsed = JSON.parse(line);
+              const delta = parsed.choices?.[0]?.delta;
 
-            for (const line of lines) {
-              if (line.startsWith('data: ')) {
-                const data = line.slice(6);
-                if (data === '[DONE]') continue;
-
-    try {
-                  const parsed = JSON.parse(data);
-                  const delta = parsed.choices?.[0]?.delta;
-
-                  if (delta?.reasoning_content) {
-                    reasoningContent += delta.reasoning_content;
-                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-                      type: 'reasoning',
-                      content: delta.reasoning_content,
-                      messageId
-                    })}\n\n`));
-                  } else if (delta?.content) {
-                    finalContent += delta.content;
-                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-                      type: 'content',
-                      content: delta.content,
-                      messageId
-                    })}\n\n`));
-                  } else if (delta?.tool_calls) {
-                    // 处理工具调用（累积分片数据）
-                    delta.tool_calls.forEach((toolCall: any) => {
-                      if (typeof toolCall.index === 'number') {
-                        const index = toolCall.index;
-                        
-                        // 确保数组长度足够
-                        while (toolCalls.length <= index) {
-                          toolCalls.push({
-                            id: `temp_${index}`,
-                            type: 'function',
-                            function: { name: '', arguments: '' }
-                          });
-                        }
-                        
-                        // 累积工具调用数据
-                        if (toolCall.id) toolCalls[index].id = toolCall.id;
-                        if (toolCall.function?.name) {
-                          toolCalls[index].function.name = toolCall.function.name;
-                        }
-                        if (toolCall.function?.arguments) {
-                          toolCalls[index].function.arguments += toolCall.function.arguments;
-                        }
-                      }
-                    });
+              if (delta?.reasoning_content) {
+                reasoningContent += delta.reasoning_content;
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                  type: 'reasoning',
+                  content: delta.reasoning_content,
+                  messageId
+                })}\n\n`));
+              } else if (delta?.content) {
+                finalContent += delta.content;
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                  type: 'content',
+                  content: delta.content,
+                  messageId
+                })}\n\n`));
+              } else if (delta?.tool_calls) {
+                // 处理工具调用（累积分片数据）
+                delta.tool_calls.forEach((toolCall: {
+                  index?: number;
+                  id?: string;
+                  function?: { name?: string; arguments?: string };
+                }) => {
+                  if (typeof toolCall.index === 'number') {
+                    const index = toolCall.index;
+                    
+                    // 确保数组长度足够
+                    while (toolCalls.length <= index) {
+                      toolCalls.push({
+                        id: `temp_${index}`,
+                        type: 'function',
+                        function: { name: '', arguments: '' }
+                      });
+                    }
+                    
+                    // 累积工具调用数据
+                    if (toolCall.id) toolCalls[index].id = toolCall.id;
+                    if (toolCall.function?.name) {
+                      toolCalls[index].function.name = toolCall.function.name;
+                    }
+                    if (toolCall.function?.arguments) {
+                      toolCalls[index].function.arguments += toolCall.function.arguments;
+                    }
                   }
-                } catch (e) {
-                  console.error('解析流式数据错误:', e);
-                }
+                });
               }
+            } catch (e) {
+              console.error('解析流式数据错误:', e);
             }
-          }
+          });
 
           // 第二阶段：如果有工具调用，执行工具
           if (toolCalls.length > 0) {
@@ -508,6 +474,7 @@ export async function POST(request: NextRequest) {
 
                 // 启动任务监控
                 monitorPendingTasks(pendingOpenManusTasks, processedMessages, validToolCalls, toolResults, controller, encoder, messageId);
+                keepOpen = true; // 标记保持流式连接
                 return; // 暂停，等待任务完成
               }
 
@@ -531,8 +498,10 @@ export async function POST(request: NextRequest) {
               messageId
             })}\n\n`));
         } finally {
+            if (!keepOpen) {
               controller.close();
             }
+        }
         }
     }), {
       headers: {
@@ -571,6 +540,13 @@ async function executeTools(toolCalls: ToolCall[], controller: any, encoder: any
     if (!data.success) {
       throw new Error(`工具执行失败: ${data.error}`);
     }
+
+    // 发送系统提示词
+    controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+      type: 'system_instruction',
+      content: '请根据以下工具执行结果回答用户问题。处理工具结果时请注意：1）重点提取和总结关键内容信息，忽略技术细节和代码；2）基于获取的信息内容，结合用户问题提供有价值的分析和建议；3）如果结果包含多个信息源，请进行整合分析；4）保持回答的准确性和实用性。',
+      messageId
+    })}\n\n`));
 
     // 发送工具结果
     data.results.forEach((result: any) => {
@@ -693,9 +669,13 @@ async function continueWithToolResults(
       try {
     console.log('🔄 使用工具结果继续DeepSeek推理');
     
-    // 构建完整的消息历史
+    // 构建完整的消息历史（确保始终包含系统提示词）
+    const baseMessages = (messages.length > 0 && messages[0].role === 'system')
+      ? messages
+      : [{ role: 'system', content: SYSTEM_PROMPT }, ...messages];
+
     const fullMessages = [
-      ...messages,
+      ...baseMessages,
       {
         role: 'assistant',
         content: '',
@@ -716,7 +696,9 @@ async function continueWithToolResults(
         messages: fullMessages,
         temperature: 0.7,
         max_tokens: 2048,
-        stream: true
+        stream: true,
+        tools: TOOL_DEFINITIONS,
+        tool_choice: 'auto'
       })
     });
     
@@ -729,47 +711,101 @@ async function continueWithToolResults(
     if (!reader) throw new Error('无法获取响应流');
 
     let finalContent = '';
+    const localToolCalls: ToolCall[] = [];
     
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    await parseStream(reader, line => {
+      if (line === '[DONE]') return;
 
-      const chunk = new TextDecoder().decode(value);
-      const lines = chunk.split('\n').filter(line => line.trim() !== '');
+      try {
+        const parsed = JSON.parse(line);
+        const delta = parsed.choices?.[0]?.delta;
 
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6);
-          if (data === '[DONE]') continue;
-
-          try {
-            const parsed = JSON.parse(data);
-            const delta = parsed.choices?.[0]?.delta;
-
-            if (delta?.content) {
-              finalContent += delta.content;
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-                type: 'content',
-                content: delta.content,
-                messageId
-              })}\n\n`));
-            }
-          } catch (e) {
-            console.error('解析续写响应错误:', e);
-    }
+        // 🚀 同步支持后续阶段的思维链输出
+        if (delta?.reasoning_content) {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+            type: 'reasoning',
+            content: delta.reasoning_content,
+            messageId
+          })}\n\n`));
         }
+
+        if (delta?.content) {
+          finalContent += delta.content;
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+            type: 'content',
+            content: delta.content,
+            messageId
+          })}\n\n`));
+        } else if (delta?.tool_calls) {
+          // 处理工具调用（累积分片数据）
+          delta.tool_calls.forEach((toolCall: {
+            index?: number;
+            id?: string;
+            function?: { name?: string; arguments?: string };
+          }) => {
+            if (typeof toolCall.index === 'number') {
+              const index = toolCall.index;
+              
+              while (localToolCalls.length <= index) {
+                localToolCalls.push({
+                  id: `temp_${index}`,
+                  type: 'function',
+                  function: { name: '', arguments: '' }
+                });
+              }
+              
+              if (toolCall.id) localToolCalls[index].id = toolCall.id;
+              if (toolCall.function?.name) localToolCalls[index].function.name = toolCall.function.name;
+              if (toolCall.function?.arguments) localToolCalls[index].function.arguments += toolCall.function.arguments;
+            }
+          });
+        }
+      } catch (e) {
+        console.error('解析续写响应错误:', e);
       }
+    });
+
+    // 如果本阶段出现工具调用，执行并递归下一阶段
+    const validToolCalls = localToolCalls.filter(tc => tc.function.name && tc.function.arguments && !tc.id.startsWith('temp_'));
+
+    if (validToolCalls.length > 0) {
+      // 通知前端工具执行开始
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+        type: 'tool_execution',
+        tool_calls: validToolCalls,
+        messageId
+      })}\n\n`));
+
+      const newToolResults = await executeTools(validToolCalls, controller, encoder, messageId);
+
+      // 检测pending任务
+      const pendingOpenManusTasks = extractPendingTasks(newToolResults);
+      if (pendingOpenManusTasks.length > 0) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+          type: 'pending_openmanus',
+          task_ids: pendingOpenManusTasks,
+          messageId
+        })}\n\n`));
+
+        await monitorPendingTasks(pendingOpenManusTasks, messages, validToolCalls, newToolResults, controller, encoder, messageId);
+        return; // monitorPendingTasks 内部会在完成后继续递归
+      }
+
+      // 递归进入下一阶段
+      await continueWithToolResults(messages, validToolCalls, newToolResults, controller, encoder, messageId);
+      return;
     }
 
-    // 发送完成信号
+    // 若无更多工具调用，则发送完成信号
     controller.enqueue(encoder.encode(`data: ${JSON.stringify({
       type: 'done',
       final_content: finalContent,
       messageId
     })}\n\n`));
-    
+
     console.log('✅ DeepSeek推理完成');
-    
+
+    controller.close();
   } catch (error) {
     console.error('❌ 续写DeepSeek推理失败:', error);
     controller.enqueue(encoder.encode(`data: ${JSON.stringify({

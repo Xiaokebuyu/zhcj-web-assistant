@@ -270,7 +270,8 @@ const UnifiedMessage: React.FC<UnifiedMessageProps> = memo(({
               执行了 {message.toolExecution.toolCalls.length} 个工具
             </span>
             <span className="text-xs text-gray-500">
-              {message.toolExecution.status === 'executing' ? '执行中...' : 
+              {message.toolExecution.status === 'executing' ? '执行中...' :
+               message.toolExecution.status === 'pending' ? '等待中...' :
                message.toolExecution.status === 'completed' ? '已完成' : '执行失败'}
             </span>
           </div>

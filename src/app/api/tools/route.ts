@@ -1,6 +1,7 @@
 // src/app/api/tools/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { ToolCall, ToolResult } from '@/types';
+import { ToolExecutor } from '@/utils/toolManager';
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,54 +14,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 执行所有工具调用
-    const results: ToolResult[] = [];
-    
-    for (const toolCall of tool_calls) {
-      try {
-        let result: object;
-        
-        switch (toolCall.function.name) {
-          case 'get_weather':
-            result = await executeWeatherTool(toolCall.function.arguments);
-            break;
-          case 'web_search':
-            result = await executeWebSearchTool(toolCall.function.arguments);
-            break;
-          case 'openmanus_web_automation':
-            result = await executeOpenManusTask(toolCall.function.arguments, 'web_automation');
-            break;
-          case 'openmanus_code_execution':
-            result = await executeOpenManusTask(toolCall.function.arguments, 'code_execution');
-            break;
-          case 'openmanus_file_operations':
-            result = await executeOpenManusTask(toolCall.function.arguments, 'file_operations');
-            break;
-          case 'openmanus_general_task':
-            result = await executeOpenManusTask(toolCall.function.arguments, 'general');
-            break;
-          default:
-            throw new Error(`未知工具: ${toolCall.function.name}`);
-        }
-        
-        results.push({
-          tool_call_id: toolCall.id,
-          role: 'tool',
-          content: JSON.stringify(result)
-        });
-        
-      } catch (error) {
-        console.error(`工具执行失败 ${toolCall.function.name}:`, error);
-        results.push({
-          tool_call_id: toolCall.id,
-          role: 'tool',
-          content: JSON.stringify({
-            error: error instanceof Error ? error.message : '工具执行失败',
-            success: false
-          })
-        });
-      }
-    }
+    // 统一调度，等待工具真正完成
+    const results: ToolResult[] = await ToolExecutor.executeTools(tool_calls);
 
     return NextResponse.json({
       results,
@@ -294,75 +249,6 @@ async function executeWebSearchTool(argumentsStr: string) {
   }
 }
 
-// OpenManus任务执行函数
-async function executeOpenManusTask(argumentsStr: string, taskType: string) {
-  const args = JSON.parse(argumentsStr);
-  const { task_description, url, code_type, operation_type, complexity } = args;
-  
-  const OPENMANUS_API_URL = process.env.OPENMANUS_API_URL || 'http://127.0.0.1:8001';
-  
-  try {
-    // 构建请求数据
-    const requestData = {
-      task_description,
-      agent_type: taskType,
-      context: {
-        url,
-        code_type,
-        operation_type,
-        complexity
-      },
-      max_steps: 10
-    };
-
-    console.log(`发送OpenManus任务请求: ${taskType}`, requestData);
-
-    const response = await fetch(`${OPENMANUS_API_URL}/api/execute_task`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(requestData),
-      signal: AbortSignal.timeout(60000) // 60秒超时
-    });
-
-    if (!response.ok) {
-      throw new Error(`OpenManus API请求失败: ${response.status} ${response.statusText}`);
-    }
-
-    const data = await response.json();
-    
-    // 检查任务是否创建成功（有task_id说明创建成功）
-    if (!data.task_id) {
-      throw new Error(`OpenManus任务创建失败: ${data.error || '未知错误'}`);
-    }
-
-    return {
-      success: true,
-      task_id: data.task_id,
-      status: data.status,
-      result: data.result,
-      steps_completed: data.steps_completed || 0,
-      total_steps: data.total_steps || 0,
-      timestamp: new Date().toISOString()
-    };
-
-  } catch (error) {
-    console.error(`OpenManus任务执行失败 (${taskType}):`, error);
-    
-    // 如果是网络错误或API不可用，返回友好的错误信息
-    if (error instanceof Error && (
-      error.message.includes('fetch failed') || 
-      error.message.includes('ECONNREFUSED') ||
-      error.message.includes('timeout')
-    )) {
-      throw new Error('OpenManus服务暂时不可用，请稍后再试');
-    }
-    
-    throw new Error(`OpenManus任务执行失败: ${error instanceof Error ? error.message : '未知错误'}`);
-  }
-}
-
 // 支持OPTIONS请求（CORS预检）
 export async function OPTIONS() {
   return new Response(null, {
@@ -374,8 +260,6 @@ export async function OPTIONS() {
     },
   });
 }
-
-
 
 // 健康检查
 export async function GET() {

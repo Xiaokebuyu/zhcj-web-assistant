@@ -244,17 +244,20 @@ export interface ToolCall {
             case 'get_weather':
               result = await this.getWeather(toolCall.function.arguments);
               break;
+            case 'web_search':
+              result = await this.executeWebSearchTool(toolCall.function.arguments);
+              break;
             case 'openmanus_web_automation':
-              result = await this.executeOpenManusTask(toolCall.function.arguments, 'web_automation');
+              result = await this.createOpenManusTask(toolCall.function.arguments, 'web_automation');
               break;
             case 'openmanus_code_execution':
-              result = await this.executeOpenManusTask(toolCall.function.arguments, 'code_execution');
+              result = await this.createOpenManusTask(toolCall.function.arguments, 'code_execution');
               break;
             case 'openmanus_file_operations':
-              result = await this.executeOpenManusTask(toolCall.function.arguments, 'file_operations');
+              result = await this.createOpenManusTask(toolCall.function.arguments, 'file_operations');
               break;
             case 'openmanus_general_task':
-              result = await this.executeOpenManusTask(toolCall.function.arguments, 'general');
+              result = await this.createOpenManusTask(toolCall.function.arguments, 'general');
               break;
             default:
               throw new Error(`未知工具: ${toolCall.function.name}`);
@@ -349,12 +352,12 @@ export interface ToolCall {
       if (!response.ok) {
         throw new Error(`地理位置API请求失败: ${response.status}`);
       }
-      
+
       const data = await response.json();
       if (data.code !== '200') {
         throw new Error(`地理位置查询失败: ${data.code}`);
       }
-      
+
       return data.location || [];
     }
     
@@ -363,16 +366,16 @@ export interface ToolCall {
       const response = await fetch(
         `https://devapi.qweather.com/v7/weather/now?location=${lon},${lat}&key=${this.QWEATHER_TOKEN}`
       );
-      
+
       if (!response.ok) {
         throw new Error(`实时天气API请求失败: ${response.status}`);
       }
-      
+
       const data = await response.json();
       if (data.code !== '200') {
         throw new Error(`实时天气查询失败: ${data.code}`);
       }
-      
+
       return data.now;
     }
     
@@ -381,16 +384,16 @@ export interface ToolCall {
       const response = await fetch(
         `https://devapi.qweather.com/v7/air/now?location=${lon},${lat}&key=${this.QWEATHER_TOKEN}`
       );
-      
+
       if (!response.ok) {
         throw new Error(`空气质量API请求失败: ${response.status}`);
       }
-      
+
       const data = await response.json();
       if (data.code !== '200') {
         throw new Error(`空气质量查询失败: ${data.code}`);
       }
-      
+
       return data.now;
     }
     
@@ -399,16 +402,16 @@ export interface ToolCall {
       const response = await fetch(
         `https://devapi.qweather.com/v7/indices/1d?type=1,2,3,5,8&location=${lon},${lat}&key=${this.QWEATHER_TOKEN}`
       );
-      
+
       if (!response.ok) {
         throw new Error(`天气指数API请求失败: ${response.status}`);
       }
-      
+
       const data = await response.json();
       if (data.code !== '200') {
         throw new Error(`天气指数查询失败: ${data.code}`);
       }
-      
+
       return data.daily || [];
     }
     
@@ -417,40 +420,95 @@ export interface ToolCall {
       const response = await fetch(
         `https://devapi.qweather.com/v7/minutely/5m?location=${lon},${lat}&key=${this.QWEATHER_TOKEN}`
       );
-      
+
       if (!response.ok) {
         throw new Error(`分钟降水API请求失败: ${response.status}`);
       }
-      
+
       const data = await response.json();
       if (data.code !== '200') {
         throw new Error(`分钟降水查询失败: ${data.code}`);
       }
-      
+
       return data;
     }
+    
+    // Web 搜索工具
+    private static async executeWebSearchTool(argumentsStr: string): Promise<object> {
+      const args = JSON.parse(argumentsStr);
+      const { query, count = 8 } = args;
 
+      const BOCHA_API_KEY = process.env.BOCHA_API_KEY;
+
+      if (!BOCHA_API_KEY) {
+        throw new Error('博查AI搜索API密钥未配置');
+      }
+
+      try {
+        const response = await fetch('https://api.bochaai.com/v1/web-search', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${BOCHA_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            query,
+            freshness: 'oneYear',
+            summary: true,
+            count: Math.min(count, 8),
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`搜索API请求失败: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (data.code !== 200) {
+          throw new Error(`搜索失败: ${data.msg || '未知错误'}`);
+        }
+
+        const searchResults = data.data?.webPages?.value || [];
+
+        return {
+          success: true,
+          query,
+          totalResults: data.data?.webPages?.totalEstimatedMatches || 0,
+          results: searchResults.map((item: any) => ({
+            name: item.name || '',
+            url: item.url || '',
+            snippet: item.snippet || '',
+            summary: item.summary || item.snippet || '',
+            siteName: item.siteName || '',
+            datePublished: item.datePublished || item.dateLastCrawled || '',
+            siteIcon: item.siteIcon || '',
+          })),
+          timestamp: new Date().toISOString(),
+        };
+      } catch (error) {
+        console.error('网络搜索失败:', error);
+        throw new Error(`网络搜索失败: ${error instanceof Error ? error.message : '未知错误'}`);
+      }
+    }
+    
     // OpenManus任务执行
     static async executeOpenManusTask(argumentsStr: string, taskType: string): Promise<object> {
       const args = JSON.parse(argumentsStr);
       const { task_description, ...otherArgs } = args;
-      
+
       try {
-        // 创建任务请求
         const taskRequest: OpenManusTaskRequest = {
           task_description,
           agent_type: 'manus',
           max_steps: 20,
-          ...otherArgs
+          ...otherArgs,
         };
 
-        // 发送任务到OpenManus API
         const response = await fetch(`${this.OPENMANUS_API_URL}/api/execute_task`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(taskRequest)
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(taskRequest),
         });
 
         if (!response.ok) {
@@ -460,21 +518,20 @@ export interface ToolCall {
         const taskResponse: OpenManusTaskResponse = await response.json();
         const taskId = taskResponse.task_id;
 
-        // 轮询任务状态，直到完成
         let attempts = 0;
-        const maxAttempts = 60; // 最多等待5分钟
-        
+        const maxAttempts = 60;
+
         while (attempts < maxAttempts) {
-          await new Promise(resolve => setTimeout(resolve, 5000)); // 等待5秒
-          
+          await new Promise((res) => setTimeout(res, 5000));
+
           const statusResponse = await fetch(`${this.OPENMANUS_API_URL}/api/task_status/${taskId}`);
-          
+
           if (!statusResponse.ok) {
             throw new Error(`获取任务状态失败: ${statusResponse.status}`);
           }
-          
+
           const status = await statusResponse.json();
-          
+
           if (status.status === 'completed') {
             return {
               success: true,
@@ -482,24 +539,68 @@ export interface ToolCall {
               task_id: taskId,
               result: status.result,
               progress: status.progress,
-              timestamp: new Date().toISOString()
+              timestamp: new Date().toISOString(),
             };
           } else if (status.status === 'failed') {
             throw new Error(`OpenManus任务执行失败: ${status.error}`);
           }
-          
+
           attempts++;
         }
-        
+
         throw new Error('OpenManus任务执行超时');
-        
       } catch (error) {
         console.error('OpenManus任务执行错误:', error);
         return {
           success: false,
           task_type: taskType,
           error: error instanceof Error ? error.message : '任务执行失败',
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+        };
+      }
+    }
+
+    // 仅创建OpenManus任务并立即返回pending结果（供前端展示进度）
+    static async createOpenManusTask(argumentsStr: string, taskType: string): Promise<object> {
+      const args = JSON.parse(argumentsStr);
+      const { task_description, ...otherArgs } = args;
+
+      try {
+        const taskRequest: OpenManusTaskRequest = {
+          task_description,
+          agent_type: 'manus',
+          max_steps: 20,
+          ...otherArgs,
+        };
+
+        const response = await fetch(`${this.OPENMANUS_API_URL}/api/execute_task`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(taskRequest),
+        });
+
+        if (!response.ok) {
+          throw new Error(`OpenManus API请求失败: ${response.status}`);
+        }
+
+        const taskResponse: OpenManusTaskResponse = await response.json();
+
+        return {
+          success: true,
+          task_type: taskType,
+          task_id: taskResponse.task_id,
+          status: taskResponse.status || 'pending',
+          message: '任务已创建',
+          timestamp: new Date().toISOString(),
+        };
+      } catch (error) {
+        console.error('创建OpenManus任务失败:', error);
+        return {
+          success: false,
+          task_type: taskType,
+          error: error instanceof Error ? error.message : '任务创建失败',
+          status: 'error',
+          timestamp: new Date().toISOString(),
         };
       }
     }
