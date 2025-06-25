@@ -78,3 +78,5 @@ OPENMANUS_INTEGRATION.md
 test-openmanus-integration.js
 
 openmanus-venv/
+
+# OpenManus/config/config.toml配置文件的忽略规则
