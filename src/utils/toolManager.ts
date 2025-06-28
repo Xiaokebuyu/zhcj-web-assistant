@@ -63,6 +63,25 @@ export interface ToolCall {
       }
     },
 
+    {
+      type: "function",
+      function: {
+        name: "submit_feedback",
+        description: "向智慧残健平台提交用户反馈",
+        parameters: {
+          type: "object",
+          properties: {
+            content: { type: "string", description: "反馈正文，≤200 字" },
+            type:    { type: "integer", description: "反馈类别 0~3", default: 0 },
+            name:    { type: "string", description: "反馈人姓名", nullable: true },
+            phone:   { type: "string", description: "手机号(11 位)", nullable: true },
+            satoken: { type: "string", description: "当前登录 token(自动注入)", nullable: true }
+          },
+          required: ["content"]
+        }
+      }
+    },
+
     // OpenManus工具定义
     {
       type: "function",
@@ -232,8 +251,40 @@ export interface ToolCall {
   export class ToolExecutor {
     private static readonly QWEATHER_TOKEN = process.env.QWEATHER_API_KEY;
     private static readonly OPENMANUS_API_URL = 'http://127.0.0.1:8001';
+    private static async submitFeedback(argsStr: string): Promise<object> {
+      const { content, type = 0, name, phone, satoken } = JSON.parse(argsStr);
+ 
+      // 参数校验
+      if (!content?.trim()) throw new Error("反馈内容不能为空");
+      if (!satoken) throw new Error("用户未登录，缺少 satoken");
+ 
+      const headers: Record<string,string> = {
+        "Content-Type":"application/json",
+        satoken      : satoken           // Sa-Token 支持从 Header 读取
+      };
+ 
+      // 如果 name / phone 为空，可先调用 /user/current
+      let finalName = name, finalPhone = phone;
+      if (!name || !phone) {
+        const r = await fetch("http://localhost:81/user/current",{ headers, credentials:"include" });
+        if (r.ok) {
+          const j = await r.json();
+          if (j.code === 200) {
+            finalName  = finalName  ?? j.data.uName;
+            finalPhone = finalPhone ?? j.data.uPhone;
+          }
+        }
+      }
+ 
+      const body = JSON.stringify({ content, type, name: finalName, phone: finalPhone });
+      const res  = await fetch("http://localhost:81/Feedback/submit",{
+        method:"POST", headers, body, credentials:"include"
+      });
+      const data = await res.json();
+      return { success: data.code === 200, ...data };
+    }
     
-    static async executeTools(toolCalls: ToolCall[]): Promise<ToolResult[]> {
+    static async executeTools(toolCalls: ToolCall[], pageContext?: import('@/types').PageContext): Promise<ToolResult[]> {
       const results: ToolResult[] = [];
       
       for (const toolCall of toolCalls) {
@@ -246,6 +297,14 @@ export interface ToolCall {
               break;
             case 'web_search':
               result = await this.executeWebSearchTool(toolCall.function.arguments);
+              break;
+            case 'submit_feedback':
+              // 从pageContext中提取satoken并注入到工具参数中
+              let feedbackArgs = JSON.parse(toolCall.function.arguments);
+              if (pageContext?.auth?.satoken) {
+                feedbackArgs.satoken = pageContext.auth.satoken;
+              }
+              result = await this.submitFeedback(JSON.stringify(feedbackArgs));
               break;
             case 'openmanus_web_automation':
               result = await this.createOpenManusTask(toolCall.function.arguments, 'web_automation');

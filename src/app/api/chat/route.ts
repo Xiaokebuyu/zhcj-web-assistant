@@ -82,6 +82,24 @@ const TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
+      name: "submit_feedback",
+      description: "向智慧残健平台提交用户反馈",
+      parameters: {
+        type: "object",
+        properties: {
+          content: { type: "string", description: "反馈正文，≤200 字" },
+          type:    { type: "integer", description: "反馈类别 0~3", default: 0 },
+          name:    { type: "string", description: "反馈人姓名", nullable: true },
+          phone:   { type: "string", description: "手机号(11 位)", nullable: true },
+          satoken: { type: "string", description: "当前登录 token(自动注入)", nullable: true }
+        },
+        required: ["content"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
       name: "openmanus_web_automation",
       description: "浏览器自动化/网页抓取，支持登录、点击、滚动、批量抓取结构化数据等复杂交互",
       parameters: {
@@ -160,6 +178,7 @@ const SYSTEM_PROMPT = `你是一个有用的AI助手。你可以使用以下工�
 可用工具：
 - get_weather: 城市天气查询（实时天气、空气质量、指数等）
 - web_search: 公共互联网关键词搜索，获取新闻、事实性资料、公开数据等
+- submit_feedback: 向智慧残健平台提交用户反馈（如用户提出反馈需求，请优先使用此工具）
 - openmanus_web_automation: 浏览器自动化/网页抓取，支持登录、点击、滚动、批量抓取结构化数据等复杂交互
 - openmanus_code_execution: Python 代码执行（数据分析、计算、可视化、文件处理等）
 - openmanus_file_operations: 文件读写/编辑/格式转换等本地或远程文件操作
@@ -457,7 +476,7 @@ export async function POST(request: NextRequest) {
             })}\n\n`));
 
               // 🔑 统一调用 /api/tools 执行所有工具
-              const toolResults = await executeTools(validToolCalls, controller, encoder, messageId);
+              const toolResults = await executeTools(validToolCalls, controller, encoder, messageId, pageContext);
                 
               // 检查是否有pending的OpenManus任务
               const pendingOpenManusTasks = extractPendingTasks(toolResults);
@@ -521,14 +540,17 @@ export async function POST(request: NextRequest) {
 }
 
 // 🔑 统一工具执行函数
-async function executeTools(toolCalls: ToolCall[], controller: any, encoder: any, messageId: string) {
+async function executeTools(toolCalls: ToolCall[], controller: any, encoder: any, messageId: string, pageContext?: PageContext) {
   try {
     console.log('📤 调用统一工具API执行工具');
     
     const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/tools`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tool_calls: toolCalls })
+      body: JSON.stringify({ 
+        tool_calls: toolCalls,
+        pageContext: pageContext
+      })
     });
 
     if (!response.ok) {

@@ -18,7 +18,7 @@
     enablePageContext: true,
     contextDepth: 'medium', // 'light', 'medium', 'full'
     autoUpdateContext: true, // 页面变化时自动更新上下文
-    contextUpdateInterval: 5000 // 5秒检查一次页面变化
+    contextUpdateInterval: 30000 // 改为30秒，避免过于频繁
   };
 
   // 页面内容提取器
@@ -49,10 +49,62 @@
         headings: this.extractHeadings(),
         mainContent: this.extractMainContent(depth),
         navigation: this.extractNavigation(),
-        pageType: this.detectPageType()
+        pageType: this.detectPageType(),
+        // 🆕 方案A：添加认证信息提取
+        authInfo: this.extractAuthInfo()
       };
 
       return content;
+    }
+
+    // 🆕 提取认证相关信息
+    extractAuthInfo() {
+      const authInfo = {
+        cookies: document.cookie,
+        timestamp: Date.now()
+      };
+
+      // 提取localStorage中的认证信息
+      const authKeys = ['token', 'satoken', 'auth', 'user', 'session', 'ada_token'];
+      const localStorage_auth = {};
+      
+      try {
+        authKeys.forEach(key => {
+          const value = localStorage.getItem(key);
+          if (value) {
+            localStorage_auth[key] = value;
+          }
+          
+          // 也检查包含这些关键词的其他key
+          Object.keys(localStorage).forEach(storageKey => {
+            if (storageKey.toLowerCase().includes(key.toLowerCase()) && !localStorage_auth[storageKey]) {
+              localStorage_auth[storageKey] = localStorage.getItem(storageKey);
+            }
+          });
+        });
+        
+        authInfo.localStorage = localStorage_auth;
+      } catch (e) {
+        console.warn('无法访问localStorage:', e);
+        authInfo.localStorage = {};
+      }
+
+      // 提取sessionStorage中的认证信息
+      try {
+        const sessionStorage_auth = {};
+        authKeys.forEach(key => {
+          const value = sessionStorage.getItem(key);
+          if (value) {
+            sessionStorage_auth[key] = value;
+          }
+        });
+        authInfo.sessionStorage = sessionStorage_auth;
+      } catch (e) {
+        console.warn('无法访问sessionStorage:', e);
+        authInfo.sessionStorage = {};
+      }
+
+      return authInfo;
     }
 
     // 提取meta信息
@@ -90,227 +142,98 @@
 
     // 提取主要内容
     extractMainContent(depth) {
-      let content = {
+      const content = {
         summary: '',
         sections: [],
         keyElements: []
       };
 
       try {
-        // 尝试找到主要内容区域
-        const mainSelectors = [
-          'main',
-          '[role="main"]',
-          '.main-content',
-          '.content',
-          'article',
-          '.post-content',
-          '.page-content'
-        ];
-
+        // 提取主要文本内容
+        const mainSelectors = ['main', 'article', '.content', '.main-content', '#content', '#main'];
         let mainElement = null;
+        
         for (const selector of mainSelectors) {
           mainElement = document.querySelector(selector);
           if (mainElement) break;
         }
-
-        // 如果没找到main区域，则使用body但排除常见的非内容元素
-        if (!mainElement) {
-          mainElement = document.body;
-        }
-
-        if (depth === 'light') {
-          // 轻量模式：只提取标题和简短描述
-          content.summary = this.extractTextSummary(mainElement, 200);
-        } else if (depth === 'medium') {
-          // 中等模式：提取主要段落和重要元素
-          content.summary = this.extractTextSummary(mainElement, 500);
-          content.sections = this.extractSections(mainElement);
-          content.keyElements = this.extractKeyElements(mainElement);
-        } else if (depth === 'full') {
-          // 完整模式：详细提取内容
-          content.summary = this.extractTextSummary(mainElement, 1000);
-          content.sections = this.extractSections(mainElement);
-          content.keyElements = this.extractKeyElements(mainElement);
-          content.fullText = this.extractCleanText(mainElement, 2000);
-        }
+        
+        const targetElement = mainElement || document.body;
+        
+        // 清理文本
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = targetElement.innerHTML;
+        
+        // 移除不需要的元素
+        const unwantedElements = tempDiv.querySelectorAll('script, style, nav, footer, .sidebar, .ad, [data-ad]');
+        unwantedElements.forEach(el => el.remove());
+        
+        const textContent = tempDiv.textContent || tempDiv.innerText || '';
+        content.summary = textContent
+          .replace(/\s+/g, ' ')
+          .trim()
+          .substring(0, depth === 'light' ? 1000 : depth === 'medium' ? 3000 : 5000);
+          
       } catch (error) {
         console.warn('内容提取失败:', error);
-        content.summary = document.title || '无法提取页面内容';
+        content.summary = document.title || '';
       }
 
       return content;
     }
 
-    // 提取文本摘要
-    extractTextSummary(element, maxLength = 500) {
-      // 排除不需要的元素
-      const excludeSelectors = [
-        'script', 'style', 'nav', 'header', 'footer', 
-        '.advertisement', '.ads', '.sidebar', '.menu',
-        '.comments', '.comment', '.social-share'
-      ];
-
-      let text = '';
-      const walker = document.createTreeWalker(
-        element,
-        NodeFilter.SHOW_TEXT,
-        {
-          acceptNode: function(node) {
-            // 检查父元素是否应该被排除
-            for (const selector of excludeSelectors) {
-              if (node.parentElement?.closest(selector)) {
-                return NodeFilter.FILTER_REJECT;
-              }
-            }
-            return NodeFilter.FILTER_ACCEPT;
-          }
-        }
-      );
-
-      while (walker.nextNode()) {
-        const nodeText = walker.currentNode.textContent?.trim();
-        if (nodeText && nodeText.length > 10) {
-          text += nodeText + ' ';
-          if (text.length > maxLength) break;
-        }
-      }
-
-      return text.slice(0, maxLength).trim();
-    }
-
-    // 提取段落和章节
-    extractSections(element) {
-      const sections = [];
-      const sectionElements = element.querySelectorAll('section, article, .section, p');
-
-      sectionElements.forEach((el, index) => {
-        const text = el.textContent?.trim();
-        if (text && text.length > 50 && sections.length < 10) {
-          sections.push({
-            index,
-            tag: el.tagName.toLowerCase(),
-            text: text.slice(0, 300),
-            className: el.className || null
-          });
-        }
-      });
-
-      return sections;
-    }
-
-    // 提取关键元素
-    extractKeyElements(element) {
-      const keyElements = [];
-
-      // 提取链接
-      const links = element.querySelectorAll('a[href]');
-      const importantLinks = Array.from(links)
-        .filter(link => link.textContent?.trim().length > 5)
-        .slice(0, 10)
-        .map(link => ({
-          type: 'link',
-          text: link.textContent.trim(),
-          href: link.href
-        }));
-
-      // 提取图片
-      const images = element.querySelectorAll('img[alt], img[title]');
-      const importantImages = Array.from(images)
-        .slice(0, 5)
-        .map(img => ({
-          type: 'image',
-          alt: img.alt || img.title || '图片',
-          src: img.src
-        }));
-
-      // 提取列表
-      const lists = element.querySelectorAll('ul, ol');
-      const importantLists = Array.from(lists)
-        .slice(0, 3)
-        .map(list => ({
-          type: 'list',
-          items: Array.from(list.querySelectorAll('li'))
-            .slice(0, 5)
-            .map(li => li.textContent?.trim())
-            .filter(text => text && text.length > 5)
-        }));
-
-      return [...importantLinks, ...importantImages, ...importantLists];
-    }
-
     // 提取导航信息
     extractNavigation() {
-      const nav = {};
-      
-      // 面包屑导航
-      const breadcrumbs = document.querySelectorAll('.breadcrumb a, .breadcrumbs a, nav[aria-label*="breadcrumb"] a');
-      if (breadcrumbs.length > 0) {
-        nav.breadcrumbs = Array.from(breadcrumbs).map(link => ({
-          text: link.textContent?.trim(),
-          href: link.href
-        }));
+      const navigation = {
+        menuItems: [],
+        breadcrumbs: []
+      };
+
+      try {
+        // 提取主导航
+        const navElements = document.querySelectorAll('nav a, .nav a, .menu a');
+        navElements.forEach(link => {
+          if (link.textContent.trim()) {
+            navigation.menuItems.push({
+              text: link.textContent.trim(),
+              href: link.href
+            });
+          }
+        });
+
+        // 提取面包屑
+        const breadcrumbSelectors = ['.breadcrumb a', '.breadcrumbs a', '[data-breadcrumb] a'];
+        breadcrumbSelectors.forEach(selector => {
+          document.querySelectorAll(selector).forEach(link => {
+            if (link.textContent.trim()) {
+              navigation.breadcrumbs.push({
+                text: link.textContent.trim(),
+                href: link.href
+              });
+            }
+          });
+        });
+        
+      } catch (error) {
+        console.warn('导航提取失败:', error);
       }
 
-      // 主导航
-      const mainNav = document.querySelector('nav, .navigation, .main-nav, .primary-nav');
-      if (mainNav) {
-        const navLinks = mainNav.querySelectorAll('a');
-        nav.mainNavigation = Array.from(navLinks)
-          .slice(0, 10)
-          .map(link => ({
-            text: link.textContent?.trim(),
-            href: link.href,
-            active: link.classList.contains('active') || link.classList.contains('current')
-          }));
-      }
-
-      return nav;
+      return navigation;
     }
 
     // 检测页面类型
     detectPageType() {
       const url = window.location.pathname.toLowerCase();
       const title = document.title.toLowerCase();
-      const bodyClass = document.body.className.toLowerCase();
-
-      // 根据URL、标题、body class等判断页面类型
-      if (url.includes('/blog/') || url.includes('/post/') || bodyClass.includes('post')) {
-        return 'blog_post';
-      } else if (url.includes('/product/') || bodyClass.includes('product')) {
-        return 'product';
-      } else if (url.includes('/about') || title.includes('about')) {
-        return 'about';
-      } else if (url.includes('/contact') || title.includes('contact')) {
-        return 'contact';
-      } else if (url === '/' || url === '/index' || url === '/home') {
-        return 'homepage';
-      } else if (url.includes('/portfolio') || url.includes('/work') || bodyClass.includes('portfolio')) {
-        return 'portfolio';
-      } else {
-        return 'general';
-      }
-    }
-
-    // 提取干净的文本内容
-    extractCleanText(element, maxLength = 2000) {
-      // 创建一个副本以避免修改原DOM
-      const clone = element.cloneNode(true);
       
-      // 移除不需要的元素
-      const unwantedSelectors = [
-        'script', 'style', 'nav', 'header', 'footer',
-        '.advertisement', '.ads', '.sidebar', '.menu',
-        '.comments', '.social-share', 'button'
-      ];
+      if (url.includes('/login') || title.includes('登录')) return 'login';
+      if (url.includes('/register') || title.includes('注册')) return 'register';
+      if (url.includes('/profile') || title.includes('个人')) return 'profile';
+      if (url.includes('/admin') || title.includes('管理')) return 'admin';
+      if (url.includes('/dashboard') || title.includes('仪表板')) return 'dashboard';
+      if (url.includes('/help') || title.includes('帮助')) return 'help';
       
-      unwantedSelectors.forEach(selector => {
-        const elements = clone.querySelectorAll(selector);
-        elements.forEach(el => el.remove());
-      });
-
-      const text = clone.textContent || '';
-      return text.replace(/\s+/g, ' ').trim().slice(0, maxLength);
+      return 'general';
     }
 
     // 监听页面变化
@@ -389,6 +312,12 @@
       this.pageExtractor = null;
       this.currentContext = null;
       this.contextUpdateTimer = null;
+      
+      // 🆕 方案A：防抖和强制更新控制
+      this.contextUpdateDebounce = null;
+      this.lastContextHash = '';
+      this.isUpdatingContext = false;
+      this.forceUpdatePromise = null;
 
       if (this.config.enablePageContext) {
         this.initPageContext();
@@ -405,71 +334,111 @@
       }
     }
 
-    // 更新页面上下文
+    // 🔧 方案A：原有的防抖更新方法
     updatePageContext() {
-      if (!this.pageExtractor) return;
-
-      try {
-        console.log('开始提取页面上下文...');
-        this.currentContext = this.pageExtractor.extractPageContent(this.config.contextDepth);
-        console.log('页面上下文提取完成:', this.currentContext);
-        
-        // 如果助手已加载，发送更新的上下文
-        if (this.isLoaded && this.iframe) {
-          console.log('发送上下文到iframe...');
-          this.postMessage('updateContext', { context: this.currentContext });
-        } else {
-          console.log('iframe未准备好，上下文将在初始化时发送');
-        }
-      } catch (error) {
-        console.warn('页面上下文更新失败:', error);
+      // 防止重复调用
+      if (this.isUpdatingContext) {
+        console.log('⏸️ 上下文更新进行中，跳过此次调用');
+        return;
       }
+
+      // 清除之前的防抖定时器
+      if (this.contextUpdateDebounce) {
+        clearTimeout(this.contextUpdateDebounce);
+      }
+
+      // 设置防抖延迟
+      this.contextUpdateDebounce = setTimeout(() => {
+        this.doUpdatePageContext(false); // false表示非强制更新
+      }, 1000); // 1秒防抖
     }
 
-    // 开始监控页面变化
-    startContextMonitoring() {
-      if (!this.pageExtractor) return;
+    // 🆕 方案A：强制立即更新上下文（工具调用前使用）
+    async forceUpdatePageContext() {
+      console.log('🔥 强制立即更新页面上下文（工具调用前）');
+      
+      // 如果已经有强制更新在进行，返回该Promise
+      if (this.forceUpdatePromise) {
+        console.log('⏸️ 强制更新已在进行中，等待完成...');
+        return this.forceUpdatePromise;
+      }
 
-      // 设置定时器检查页面变化
-      this.contextUpdateTimer = setInterval(() => {
-        const currentUrl = window.location.href;
-        const currentTitle = document.title;
-        
-        if (this.lastUrl !== currentUrl || this.lastTitle !== currentTitle) {
-          this.updatePageContext();
-          this.lastUrl = currentUrl;
-          this.lastTitle = currentTitle;
+      // 创建强制更新Promise
+      this.forceUpdatePromise = new Promise((resolve, reject) => {
+        // 清除防抖定时器
+        if (this.contextUpdateDebounce) {
+          clearTimeout(this.contextUpdateDebounce);
+          this.contextUpdateDebounce = null;
         }
-      }, this.config.contextUpdateInterval);
 
-      // 设置页面变化观察器
-      this.pageExtractor.startObserver(() => {
-        setTimeout(() => this.updatePageContext(), 1000); // 延迟1秒确保内容加载完成
+        // 立即执行更新
+        try {
+          this.doUpdatePageContext(true, resolve); // true表示强制更新
+        } catch (error) {
+          reject(error);
+        }
       });
+
+      return this.forceUpdatePromise;
     }
 
-    // 停止监控页面变化
-    stopContextMonitoring() {
-      if (this.contextUpdateTimer) {
-        clearInterval(this.contextUpdateTimer);
-        this.contextUpdateTimer = null;
+    // 🔧 实际执行上下文更新的方法
+    doUpdatePageContext(isForced = false, callback = null) {
+      if (!this.pageExtractor) {
+        if (callback) callback(null);
+        return;
       }
-
-      if (this.pageExtractor) {
-        this.pageExtractor.stopObserver();
-      }
-    }
-
-    // 初始化助手
-    init() {
+      
+      this.isUpdatingContext = true;
+      
       try {
-        this.createContainer();
-        this.loadStyles();
-        this.loadAssistant();
+        console.log(isForced ? '🔥 执行强制上下文更新...' : '📄 执行常规上下文更新...');
+        const context = this.pageExtractor.extractPageContent(this.config.contextDepth);
+        
+        // 计算上下文哈希（用于去重）
+        const contextHash = JSON.stringify({
+          url: context.basic.url,
+          title: context.basic.title,
+          headingCount: context.headings.length,
+          contentLength: context.mainContent.summary?.length || 0,
+          // 🆕 方案A：如果是强制更新，包含认证信息哈希
+          authHash: isForced ? JSON.stringify(context.authInfo) : undefined
+        });
+        
+        // 非强制更新时检查是否真的有变化
+        if (!isForced && contextHash === this.lastContextHash) {
+          console.log('📄 页面上下文无变化，跳过更新');
+          if (callback) callback(this.currentContext);
+          return;
+        }
+        
+        this.lastContextHash = contextHash;
+        this.currentContext = context;
+        
+        console.log(`✅ 页面上下文已更新 (${isForced ? '强制' : '常规'}):`, context.basic.title);
+        
+        // 发送更新到iframe
+        if (this.isLoaded) {
+          this.postMessage('updateContext', { 
+            context,
+            forced: isForced,
+            timestamp: Date.now()
+          });
+        } else {
+          console.log('📦 iframe未准备好，上下文将在初始化时发送');
+        }
+        
+        if (callback) callback(context);
+        
       } catch (error) {
-        console.error('AI Assistant 初始化失败:', error);
-        if (this.onError) {
-          this.onError(error);
+        console.error('❌ 页面上下文提取失败:', error);
+        if (callback) callback(null);
+      } finally {
+        this.isUpdatingContext = false;
+        
+        // 清理强制更新Promise
+        if (isForced) {
+          this.forceUpdatePromise = null;
         }
       }
     }
@@ -564,7 +533,7 @@
       this.container.appendChild(this.iframe);
     }
 
-    // 设置消息通信
+    // 🔧 方案A：修复后的消息处理
     setupMessageHandling() {
       window.addEventListener('message', (event) => {
         if (event.origin !== new URL(this.config.baseUrl).origin) {
@@ -572,11 +541,17 @@
         }
 
         const { type, data } = event.data;
-        console.log('父页面收到消息:', type, data); // 添加调试日志
+        console.log('父页面收到消息:', type, data);
 
         switch (type) {
           case 'ai-assistant-ready':
             console.log('AI Assistant 准备就绪');
+            // 🔑 修复：立即发送初始化消息
+            this.postMessage('init', { 
+              config: this.config,
+              context: this.currentContext,
+              timestamp: Date.now()
+            });
             break;
           
           case 'ai-assistant-resize':
@@ -591,19 +566,24 @@
             break;
 
           case 'ai-assistant-requestPageContext':
-            // 助手请求页面上下文
             console.log('收到上下文请求，开始更新页面上下文...');
             this.updatePageContext();
+            break;
+          
+          // 🆕 方案A：处理工具调用前的强制上下文更新请求
+          case 'ai-assistant-forceContextUpdate':
+            console.log('收到强制上下文更新请求...');
+            this.forceUpdatePageContext().then(context => {
+              this.postMessage('contextUpdateComplete', { 
+                context,
+                requestId: data.requestId 
+              });
+            });
             break;
           
           default:
             break;
         }
-      });
-
-      this.postMessage('init', { 
-        config: this.config,
-        context: this.currentContext 
       });
     }
 
@@ -624,6 +604,35 @@
       }
     }
 
+    // 启动上下文监控
+    startContextMonitoring() {
+      if (!this.config.enablePageContext) return;
+      
+      this.updatePageContext();
+      
+      if (this.config.autoUpdateContext) {
+        this.contextMonitorInterval = setInterval(() => {
+          this.updatePageContext();
+        }, this.config.contextUpdateInterval || 30000);
+      }
+    }
+
+    // 停止上下文监控
+    stopContextMonitoring() {
+      if (this.contextMonitorInterval) {
+        clearInterval(this.contextMonitorInterval);
+        this.contextMonitorInterval = null;
+      }
+    }
+
+    // 初始化
+    init() {
+      this.createContainer();
+      this.loadStyles();
+      this.loadAssistant();
+      this.startContextMonitoring();
+    }
+
     // 公共API方法
     show() {
       this.postMessage('show');
@@ -636,6 +645,12 @@
     // 手动更新页面上下文
     refreshContext() {
       this.updatePageContext();
+    }
+
+    // 🆕 方案A：工具调用前强制刷新上下文的公共API
+    async refreshContextForTools() {
+      console.log('🔧 准备工具调用，强制刷新页面上下文...');
+      return this.forceUpdatePageContext();
     }
 
     // 获取当前页面上下文（用于调试）

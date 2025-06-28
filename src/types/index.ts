@@ -102,6 +102,9 @@ export interface PageContext {
     keyPoints?: string[];
     categories?: string[];
   };
+  auth?: {
+    satoken?: string;
+  };
 }
 
 // 页面信息类型

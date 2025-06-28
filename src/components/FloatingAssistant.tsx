@@ -616,6 +616,11 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
         return 'general';
       };
 
+      // 采集 Sa-Token
+      const satoken = document.cookie
+        .split('; ')
+        .find(c => c.startsWith('satoken='))?.split('=')[1];
+
       const context: PageContext = {
         basic: {
           title: document.title,
@@ -644,7 +649,8 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
           summary: extractTextSummary(300),
           keyPoints: headings.slice(0, 5).map(h => h.text),
           categories: []
-        }
+        },
+        auth: { satoken }
       };
 
       console.log('页面上下文提取完成:', context);
@@ -668,6 +674,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
       // 不在iframe环境中，直接提取当前页面上下文
       console.log('初始化时直接提取页面上下文');
       extractCurrentPageContext();
+      
     }
 
     const handleMessage = (event: MessageEvent) => {
@@ -801,6 +808,7 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
     const toolNames: Record<string, string> = {
       'get_weather': '天气查询',
       'web_search': '网络搜索',
+      'submit_feedback': '反馈提交',
       // OpenManus工具
       'openmanus_web_automation': '网页自动化',
       'openmanus_code_execution': '代码执行',

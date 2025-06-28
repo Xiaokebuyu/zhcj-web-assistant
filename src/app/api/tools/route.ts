@@ -1,11 +1,11 @@
 // src/app/api/tools/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { ToolCall, ToolResult } from '@/types';
+import { ToolCall, ToolResult, PageContext } from '@/types';
 import { ToolExecutor } from '@/utils/toolManager';
 
 export async function POST(request: NextRequest) {
   try {
-    const { tool_calls }: { tool_calls: ToolCall[] } = await request.json();
+    const { tool_calls, pageContext }: { tool_calls: ToolCall[], pageContext?: PageContext } = await request.json();
 
     if (!tool_calls || !Array.isArray(tool_calls) || tool_calls.length === 0) {
       return NextResponse.json(
@@ -14,8 +14,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 统一调度，等待工具真正完成
-    const results: ToolResult[] = await ToolExecutor.executeTools(tool_calls);
+    // 统一调度，等待工具真正完成，并传递pageContext
+    const results: ToolResult[] = await ToolExecutor.executeTools(tool_calls, pageContext);
 
     return NextResponse.json({
       results,
