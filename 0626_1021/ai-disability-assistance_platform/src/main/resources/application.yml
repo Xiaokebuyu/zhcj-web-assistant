@@ -44,8 +44,10 @@ sa-token:
   # token风格
   token-style: uuid
   # 是否输出操作日志
-  is-log: false
+  is-log: true
 
   #确保启用Cookie读取
   is-read-cookie: true
+  # ✅ 添加这一行！启用Header读取
+  is-read-header: true
 

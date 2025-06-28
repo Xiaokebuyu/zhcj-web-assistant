@@ -10,18 +10,22 @@ const request = axios.create({
 // 请求拦截器：自动在 headers 中添加 Token
 request.interceptors.request.use(
     (config) => {
-        // ✅ 认证Token 兼容处理：先取 satoken，再回退 ada_token
-        let token = Cookies.get("satoken");
+        // ✅ 修复：优先获取ada_token，然后检查satoken
+        let token = Cookies.get("ada_token");
         if (!token) {
-            token = Cookies.get("ada_token");
+            token = Cookies.get("satoken");
         }
 
         console.log("request.js 获取到 token:", token || "<空>");
 
         if (token) {
-            // 后端（Sa-Token）推荐使用自定义头: satoken
+            // ✅ 关键修复：使用ada_token作为header名称，与后端Sa-Token配置一致
+            config.headers["ada_token"] = token;
+            
+            // 保留satoken头以兼容性（如果有其他地方需要）
             config.headers["satoken"] = token;
-            // 同时保留 Authorization 头以兼容旧接口
+            
+            // 保留Authorization头以兼容
             config.headers.Authorization = token;
         }
         return config;

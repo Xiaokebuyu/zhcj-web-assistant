@@ -343,18 +343,20 @@ export interface ToolCall {
       if (!content?.trim()) throw new Error("反馈内容不能为空");
       if (!satoken) throw new Error("用户未登录，缺少认证信息");
  
-      // ✅ 修改：使用正确的认证头格式，与Vue前端保持一致
+      // ✅ 关键修复：使用ada_token作为header名称
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
-        "satoken": satoken  // 直接按Sa-Token约定传递token
+        "ada_token": satoken,  // 主要：与后端Sa-Token配置一致
+        "satoken": satoken,    // 保留：向后兼容
       };
  
-      // 如果 name / phone 为空，可先调用 /user/current
+      // 获取用户信息的API调用也要修复
       let finalName = name, finalPhone = phone;
       if (!name || !phone) {
         const r = await fetch("http://localhost:81/user/current", { 
           headers: {
-            "satoken": satoken  // 按Sa-Token约定传递token
+            "ada_token": satoken,  // 修复：使用正确的header名称
+            "satoken": satoken     // 保留：向后兼容
           }, 
           credentials: "include" 
         });
@@ -375,7 +377,7 @@ export interface ToolCall {
       return { success: data.code === 200, ...data };
     }
 
-    // ✅ 修复submitPost方法 - 使用Authorization头
+    // 修复submitPost方法
     private static async submitPost(argsStr: string): Promise<object> {
       const { title, content, type = 0, satoken } = JSON.parse(argsStr);
 
@@ -384,10 +386,11 @@ export interface ToolCall {
       if (!title || !content) throw new Error("标题和内容不能为空");
       if (content.length < 10) throw new Error("帖子内容不少于10字");
 
-      // ✅ 修改：使用正确的认证头格式
+      // ✅ 关键修复：使用ada_token作为header名称
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
-        "satoken": satoken  // 直接按Sa-Token约定传递token
+        "ada_token": satoken,  // 主要：与后端Sa-Token配置一致
+        "satoken": satoken,    // 保留：向后兼容
       };
 
       const body = JSON.stringify({
@@ -407,7 +410,7 @@ export interface ToolCall {
       return { success: data.code === 200, ...data };
     }
 
-    // ✅ 修复submitRequest方法 - 使用Authorization头
+    // 修复submitRequest方法
     private static async submitRequest(argsStr: string): Promise<object> {
       const { content, type = 0, urgent = 0, isOnline = 1, address, satoken } = JSON.parse(argsStr);
 
@@ -417,10 +420,11 @@ export interface ToolCall {
       if (content.length < 10) throw new Error("求助内容不少于10字");
       if (isOnline === 0 && !address?.trim()) throw new Error("线下求助必须填写地址");
 
-      // ✅ 修改：使用正确的认证头格式
+      // ✅ 关键修复：使用ada_token作为header名称
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
-        "satoken": satoken  // 直接按Sa-Token约定传递token
+        "ada_token": satoken,  // 主要：与后端Sa-Token配置一致
+        "satoken": satoken,    // 保留：向后兼容
       };
 
       const body = JSON.stringify({
