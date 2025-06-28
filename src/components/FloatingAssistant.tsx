@@ -619,10 +619,18 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
         return 'general';
       };
 
-      // 采集 Sa-Token
-      const satoken = document.cookie
+      // ✅ 认证Token提取：优先使用 Sa-Token 默认 cookie("satoken")，
+      // 若不存在再尝试旧版 "ada_token" 作为回退。
+      const satokenCookie = document.cookie
         .split('; ')
-        .find(c => c.startsWith('satoken='))?.split('=')[1];
+        .find(c => c.startsWith('satoken='))?.split('=')[1] ?? null;
+
+      const adaTokenCookie = document.cookie
+        .split('; ')
+        .find(c => c.startsWith('ada_token='))?.split('=')[1] ?? null;
+
+      // 采用 satokenCookie，如果不存在则使用 adaTokenCookie 作为回退
+      const satoken = satokenCookie || adaTokenCookie || undefined;
 
       const context: PageContext = {
         basic: {

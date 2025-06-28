@@ -54,6 +54,17 @@
         authInfo: this.extractAuthInfo()
       };
 
+      // ✅ 添加正确的认证信息映射到AI助手期望的格式
+      const ada_token = this.extractAdaToken();
+      if (ada_token) {
+        content.auth = {
+          satoken: ada_token
+        };
+        console.log('🔑 embed.js: 成功映射ada_token到auth.satoken');
+      } else {
+        console.warn('⚠️ embed.js: 未找到ada_token');
+      }
+
       return content;
     }
 
@@ -105,6 +116,47 @@
       }
 
       return authInfo;
+    }
+
+    // ✅ 添加专门的ada_token提取方法
+    extractAdaToken() {
+      try {
+        // 方法1：从Cookie提取
+        const cookieToken = document.cookie
+          .split('; ')
+          .find(cookie => cookie.startsWith('ada_token='))
+          ?.split('=')[1];
+        
+        if (cookieToken) {
+          console.log('🔑 embed.js: 从Cookie成功提取ada_token');
+          return cookieToken;
+        }
+
+        // 方法2：从localStorage提取
+        const localToken = localStorage.getItem('ada_token');
+        if (localToken) {
+          console.log('🔑 embed.js: 从localStorage成功提取ada_token');
+          return localToken;
+        }
+
+        // 方法3：检查是否有其他相关token
+        const allCookies = document.cookie.split('; ');
+        for (const cookie of allCookies) {
+          if (cookie.includes('token') && !cookie.includes('csrf')) {
+            const [key, value] = cookie.split('=');
+            if (key.toLowerCase().includes('ada') || key.toLowerCase().includes('auth')) {
+              console.log(`🔑 embed.js: 从Cookie找到相关token: ${key}`);
+              return value;
+            }
+          }
+        }
+
+        console.warn('⚠️ embed.js: 未找到ada_token');
+        return null;
+      } catch (error) {
+        console.warn('❌ embed.js: 提取ada_token失败:', error);
+        return null;
+      }
     }
 
     // 提取meta信息

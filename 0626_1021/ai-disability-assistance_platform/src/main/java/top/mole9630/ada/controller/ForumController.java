@@ -24,7 +24,7 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/forum")
-@CrossOrigin(origins = "http://localhost:8080", allowCredentials = "true")
+@CrossOrigin(origins = {"http://localhost:8080", "http://localhost:8081", "http://localhost:3000"}, allowCredentials = "true")
 @Api(tags = "论坛相关接口")
 @Slf4j
 public class ForumController {

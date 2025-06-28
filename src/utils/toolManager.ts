@@ -289,50 +289,105 @@ export interface ToolCall {
   export class ToolExecutor {
     private static readonly QWEATHER_TOKEN = process.env.QWEATHER_API_KEY;
     private static readonly OPENMANUS_API_URL = 'http://127.0.0.1:8001';
+    
+    // ✅ 添加认证调试功能
+    private static debugAuthInfo(pageContext?: import('@/types').PageContext) {
+      console.log('🔍 认证调试信息:');
+      console.log('- pageContext存在:', !!pageContext);
+      console.log('- pageContext.auth存在:', !!pageContext?.auth);
+      console.log('- pageContext.auth.satoken:', pageContext?.auth?.satoken ? '已获取' : '未获取');
+      
+      // 尝试直接从Cookie获取（如果在浏览器环境）
+      if (typeof document !== 'undefined') {
+        const directSaToken = document.cookie
+          .split('; ')
+          .find(c => c.startsWith('satoken='))?.split('=')[1];
+        console.log('- 直接从Cookie获取satoken:', directSaToken ? '已获取' : '未获取');
+        
+        // 显示所有cookies用于调试
+        console.log('- 所有Cookies:', document.cookie);
+      }
+    }
+
+    // ✅ 添加回退token提取方法
+    private static extractFallbackToken(): string | null {
+      try {
+        // 尝试从当前环境的Cookie直接提取
+        if (typeof document !== 'undefined') {
+          // 优先读取 Sa-Token 默认 cookie("satoken")
+          let token = document.cookie
+            .split('; ')
+            .find(c => c.startsWith('satoken='))?.split('=')[1];
+
+          // 回退：尝试旧版 "ada_token"
+          if (!token) {
+            token = document.cookie
+              .split('; ')
+              .find(c => c.startsWith('ada_token='))?.split('=')[1];
+          }
+
+          return token || null;
+        }
+        return null;
+      } catch (error) {
+        console.warn('回退认证提取失败:', error);
+        return null;
+      }
+    }
+
+    // ✅ 修复submitFeedback方法 - 使用Authorization头
     private static async submitFeedback(argsStr: string): Promise<object> {
       const { content, type = 0, name, phone, satoken } = JSON.parse(argsStr);
  
       // 参数校验
       if (!content?.trim()) throw new Error("反馈内容不能为空");
-      if (!satoken) throw new Error("用户未登录，缺少 satoken");
+      if (!satoken) throw new Error("用户未登录，缺少认证信息");
  
-      const headers: Record<string,string> = {
-        "Content-Type":"application/json",
-        satoken      : satoken           // Sa-Token 支持从 Header 读取
+      // ✅ 修改：使用正确的认证头格式，与Vue前端保持一致
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        "satoken": satoken  // 直接按Sa-Token约定传递token
       };
  
       // 如果 name / phone 为空，可先调用 /user/current
       let finalName = name, finalPhone = phone;
       if (!name || !phone) {
-        const r = await fetch("http://localhost:81/user/current",{ headers, credentials:"include" });
+        const r = await fetch("http://localhost:81/user/current", { 
+          headers: {
+            "satoken": satoken  // 按Sa-Token约定传递token
+          }, 
+          credentials: "include" 
+        });
         if (r.ok) {
           const j = await r.json();
           if (j.code === 200) {
-            finalName  = finalName  ?? j.data.uName;
+            finalName = finalName ?? j.data.uName;
             finalPhone = finalPhone ?? j.data.uPhone;
           }
         }
       }
  
       const body = JSON.stringify({ content, type, name: finalName, phone: finalPhone });
-      const res  = await fetch("http://localhost:81/Feedback/submit",{
-        method:"POST", headers, body, credentials:"include"
+      const res = await fetch("http://localhost:81/Feedback/submit", {
+        method: "POST", headers, body, credentials: "include"
       });
       const data = await res.json();
       return { success: data.code === 200, ...data };
     }
 
+    // ✅ 修复submitPost方法 - 使用Authorization头
     private static async submitPost(argsStr: string): Promise<object> {
       const { title, content, type = 0, satoken } = JSON.parse(argsStr);
 
       // 参数校验
-      if (!satoken) throw new Error("未登录，缺少 satoken");
+      if (!satoken) throw new Error("未登录，缺少认证信息");
       if (!title || !content) throw new Error("标题和内容不能为空");
       if (content.length < 10) throw new Error("帖子内容不少于10字");
 
+      // ✅ 修改：使用正确的认证头格式
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
-        satoken: satoken
+        "satoken": satoken  // 直接按Sa-Token约定传递token
       };
 
       const body = JSON.stringify({
@@ -352,18 +407,20 @@ export interface ToolCall {
       return { success: data.code === 200, ...data };
     }
 
+    // ✅ 修复submitRequest方法 - 使用Authorization头
     private static async submitRequest(argsStr: string): Promise<object> {
       const { content, type = 0, urgent = 0, isOnline = 1, address, satoken } = JSON.parse(argsStr);
 
       // 参数校验
-      if (!satoken) throw new Error("未登录，缺少 satoken");
+      if (!satoken) throw new Error("未登录，缺少认证信息");
       if (!content?.trim()) throw new Error("求助内容不能为空");
       if (content.length < 10) throw new Error("求助内容不少于10字");
       if (isOnline === 0 && !address?.trim()) throw new Error("线下求助必须填写地址");
 
+      // ✅ 修改：使用正确的认证头格式
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
-        satoken: satoken
+        "satoken": satoken  // 直接按Sa-Token约定传递token
       };
 
       const body = JSON.stringify({
@@ -385,7 +442,11 @@ export interface ToolCall {
       return { success: data.code === 200, ...data };
     }
     
+    // ✅ 增强executeTools方法 - 添加调试信息和回退机制
     static async executeTools(toolCalls: ToolCall[], pageContext?: import('@/types').PageContext): Promise<ToolResult[]> {
+      // 添加调试信息
+      this.debugAuthInfo(pageContext);
+      
       const results: ToolResult[] = [];
       
       for (const toolCall of toolCalls) {
@@ -400,28 +461,97 @@ export interface ToolCall {
               result = await this.executeWebSearchTool(toolCall.function.arguments);
               break;
             case 'submit_feedback':
-              // 从pageContext中提取satoken并注入到工具参数中
-              let feedbackArgs = JSON.parse(toolCall.function.arguments);
-              if (pageContext?.auth?.satoken) {
-                feedbackArgs.satoken = pageContext.auth.satoken;
+              // ✅ 增强认证处理 - 添加回退机制
+              try {
+                // 主要认证流程
+                let feedbackArgs = JSON.parse(toolCall.function.arguments);
+                
+                // 优先从pageContext获取认证信息
+                if (pageContext?.auth?.satoken) {
+                  feedbackArgs.satoken = pageContext.auth.satoken;
+                } 
+                // 回退：尝试直接从环境获取
+                else {
+                  const fallbackToken = this.extractFallbackToken();
+                  if (fallbackToken) {
+                    feedbackArgs.satoken = fallbackToken;
+                    console.warn('⚠️ 使用回退认证token');
+                  } else {
+                    throw new Error('无法获取认证信息，请确保用户已登录');
+                  }
+                }
+                
+                result = await this.submitFeedback(JSON.stringify(feedbackArgs));
+              } catch (authError) {
+                console.error('认证失败:', authError);
+                result = {
+                  error: `认证失败: ${authError instanceof Error ? authError.message : '未知错误'}`,
+                  suggestion: '请刷新页面重新登录，或检查登录状态',
+                  success: false
+                };
               }
-              result = await this.submitFeedback(JSON.stringify(feedbackArgs));
               break;
             case 'submit_post':
-              // 从pageContext中提取satoken并注入到工具参数中
-              let postArgs = JSON.parse(toolCall.function.arguments);
-              if (pageContext?.auth?.satoken) {
-                postArgs.satoken = pageContext.auth.satoken;
+              // ✅ 增强认证处理 - 添加回退机制
+              try {
+                // 主要认证流程
+                let postArgs = JSON.parse(toolCall.function.arguments);
+                
+                // 优先从pageContext获取认证信息
+                if (pageContext?.auth?.satoken) {
+                  postArgs.satoken = pageContext.auth.satoken;
+                } 
+                // 回退：尝试直接从环境获取
+                else {
+                  const fallbackToken = this.extractFallbackToken();
+                  if (fallbackToken) {
+                    postArgs.satoken = fallbackToken;
+                    console.warn('⚠️ 使用回退认证token');
+                  } else {
+                    throw new Error('无法获取认证信息，请确保用户已登录');
+                  }
+                }
+                
+                result = await this.submitPost(JSON.stringify(postArgs));
+              } catch (authError) {
+                console.error('认证失败:', authError);
+                result = {
+                  error: `认证失败: ${authError instanceof Error ? authError.message : '未知错误'}`,
+                  suggestion: '请刷新页面重新登录，或检查登录状态',
+                  success: false
+                };
               }
-              result = await this.submitPost(JSON.stringify(postArgs));
               break;
             case 'submit_request':
-              // 从pageContext中提取satoken并注入到工具参数中
-              let requestArgs = JSON.parse(toolCall.function.arguments);
-              if (pageContext?.auth?.satoken) {
-                requestArgs.satoken = pageContext.auth.satoken;
+              // ✅ 增强认证处理 - 添加回退机制
+              try {
+                // 主要认证流程
+                let requestArgs = JSON.parse(toolCall.function.arguments);
+                
+                // 优先从pageContext获取认证信息
+                if (pageContext?.auth?.satoken) {
+                  requestArgs.satoken = pageContext.auth.satoken;
+                } 
+                // 回退：尝试直接从环境获取
+                else {
+                  const fallbackToken = this.extractFallbackToken();
+                  if (fallbackToken) {
+                    requestArgs.satoken = fallbackToken;
+                    console.warn('⚠️ 使用回退认证token');
+                  } else {
+                    throw new Error('无法获取认证信息，请确保用户已登录');
+                  }
+                }
+                
+                result = await this.submitRequest(JSON.stringify(requestArgs));
+              } catch (authError) {
+                console.error('认证失败:', authError);
+                result = {
+                  error: `认证失败: ${authError instanceof Error ? authError.message : '未知错误'}`,
+                  suggestion: '请刷新页面重新登录，或检查登录状态',
+                  success: false
+                };
               }
-              result = await this.submitRequest(JSON.stringify(requestArgs));
               break;
             case 'openmanus_web_automation':
               result = await this.createOpenManusTask(toolCall.function.arguments, 'web_automation');

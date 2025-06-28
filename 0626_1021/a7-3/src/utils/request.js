@@ -10,10 +10,19 @@ const request = axios.create({
 // 请求拦截器：自动在 headers 中添加 Token
 request.interceptors.request.use(
     (config) => {
-        const token = Cookies.get("ada_token"); // 从 Cookie 获取 token
-        console.log(token,"request.js的token");
+        // ✅ 认证Token 兼容处理：先取 satoken，再回退 ada_token
+        let token = Cookies.get("satoken");
+        if (!token) {
+            token = Cookies.get("ada_token");
+        }
+
+        console.log("request.js 获取到 token:", token || "<空>");
+
         if (token) {
-            config.headers.Authorization = token; // 添加 Authorization 头
+            // 后端（Sa-Token）推荐使用自定义头: satoken
+            config.headers["satoken"] = token;
+            // 同时保留 Authorization 头以兼容旧接口
+            config.headers.Authorization = token;
         }
         return config;
     },

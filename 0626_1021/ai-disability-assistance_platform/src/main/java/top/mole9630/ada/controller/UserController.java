@@ -22,10 +22,11 @@ import top.mole9630.ada.utils.ValidateCodeUtils;
 
 import javax.servlet.http.HttpServletRequest;
 import java.util.Map;
+import java.util.HashMap;
 
 @RestController
 @RequestMapping("/user")
-@CrossOrigin(origins = "http://localhost:8080",allowCredentials = "true")
+@CrossOrigin(origins = {"http://localhost:8080", "http://localhost:8081", "http://localhost:3000"}, allowCredentials = "true")
 @Api(tags = "用户相关接口")
 @Slf4j
 public class UserController {
@@ -119,7 +120,7 @@ public class UserController {
      */
     @PostMapping("/login")
     @ApiOperation(value = "用户登录")
-    public Result<User> login(HttpServletRequest request, @RequestBody UserLoginDto userDto) {
+    public Result<Map<String, Object>> login(HttpServletRequest request, @RequestBody UserLoginDto userDto) {
         // 1.将页面提交的密码password进行md5加密处理
         String password = userDto.getPassword();
         password = DigestUtils.md5DigestAsHex(password.getBytes());
@@ -155,12 +156,12 @@ public class UserController {
         // 4.登录成功
         StpUtil.login(u.getUId());
 
-        // 返回用户信息 + token
-//        Map<String, Object> result = new HashMap<>();
-//        result.put("user", u);
-//        result.put("token", StpUtil.getTokenValue()); // 显式返回 token
-//        return Result.success(result, "登录成功");
-        return Result.success(u, "登录成功");
+        // 将 token 与用户信息一起返回，便于跨域前端（如 AI 助手）在 header 中携带
+        Map<String, Object> result = new HashMap<>();
+        result.put("user", u);
+        result.put("token", StpUtil.getTokenValue()); // 显式返回 token 字符串
+
+        return Result.success(result, "登录成功");
     }
 
     /**

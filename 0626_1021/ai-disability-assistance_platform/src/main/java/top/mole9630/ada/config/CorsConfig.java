@@ -9,7 +9,7 @@ public class CorsConfig implements WebMvcConfigurer {
     @Override
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/**")
-                .allowedOrigins("http://localhost:8080", "http://localhost:8081") // 允许的前端地址
+                .allowedOrigins("http://localhost:8080", "http://localhost:8081", "http://localhost:3000") // 允许的前端地址
                 .allowCredentials(true) // 允许携带凭证
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS") // 允许的请求方法
                 .allowedHeaders("*") // 允许的请求头

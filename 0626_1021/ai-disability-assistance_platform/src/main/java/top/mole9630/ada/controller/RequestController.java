@@ -17,7 +17,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/request")
-@CrossOrigin(origins = "http://localhost:8080",allowCredentials = "true")
+@CrossOrigin(origins = {"http://localhost:8080", "http://localhost:8081", "http://localhost:3000"}, allowCredentials = "true")
 @Api(tags = "求助相关接口")
 public class RequestController {
     @Autowired
