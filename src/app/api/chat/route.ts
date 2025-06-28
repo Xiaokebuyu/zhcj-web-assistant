@@ -100,6 +100,42 @@ const TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
+      name: "submit_post",
+      description: "在论坛发表新帖子",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "帖子标题" },
+          content: { type: "string", description: "正文，不少于10字" },
+          type: { type: "integer", description: "帖子分类 0~5", default: 0 },
+          satoken: { type: "string", description: "用户登录 token(自动注入)", nullable: true }
+        },
+        required: ["title", "content"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "submit_request",
+      description: "发布新的求助信息（残障人士使用）",
+      parameters: {
+        type: "object",
+        properties: {
+          content: { type: "string", description: "求助内容，不少于10字" },
+          type: { type: "integer", description: "求助类别 0~N", default: 0 },
+          urgent: { type: "integer", description: "紧急程度 0-普通 1-较急 2-紧急 3-危急", default: 0 },
+          isOnline: { type: "integer", description: "0=线下 1=线上", default: 1 },
+          address: { type: "string", description: "线下地址(仅 isOnline=0 时必填)", nullable: true },
+          satoken: { type: "string", description: "登录 token(自动注入)", nullable: true }
+        },
+        required: ["content"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
       name: "openmanus_web_automation",
       description: "浏览器自动化/网页抓取，支持登录、点击、滚动、批量抓取结构化数据等复杂交互",
       parameters: {
@@ -179,6 +215,8 @@ const SYSTEM_PROMPT = `你是一个有用的AI助手。你可以使用以下工�
 - get_weather: 城市天气查询（实时天气、空气质量、指数等）
 - web_search: 公共互联网关键词搜索，获取新闻、事实性资料、公开数据等
 - submit_feedback: 向智慧残健平台提交用户反馈（如用户提出反馈需求，请优先使用此工具）
+- submit_post: 在论坛发表新帖子（如用户想要发帖，请优先使用此工具）
+- submit_request: 发布新的求助信息（如用户需要发布求助，请优先使用此工具）
 - openmanus_web_automation: 浏览器自动化/网页抓取，支持登录、点击、滚动、批量抓取结构化数据等复杂交互
 - openmanus_code_execution: Python 代码执行（数据分析、计算、可视化、文件处理等）
 - openmanus_file_operations: 文件读写/编辑/格式转换等本地或远程文件操作

@@ -176,6 +176,9 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   const [pageContext, setPageContext] = useState<PageContext | null>(null);
   const [contextStatus, setContextStatus] = useState<ContextStatus>('disabled');
   const [lastContextUpdate, setLastContextUpdate] = useState<Date | null>(null);
+  
+  // 悬浮按钮局部可点击状态
+  const [floatingButtonClickable, setFloatingButtonClickable] = useState(false);
 
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -701,6 +704,20 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
             console.log('初始页面上下文已设置:', data.context.basic?.title);
           }
           break;
+          
+        case 'needFloatingButtonClickable':
+          console.log('📥 收到悬浮按钮可点击状态更新消息:', data);
+          const clickable = data.clickable || false;
+          setFloatingButtonClickable(clickable);
+          console.log('✅ 悬浮按钮可点击状态已更新为:', clickable);
+          break;
+          
+        case 'ai-assistant-buttonClicked':
+          console.log('收到父页面按钮点击消息');
+          if (data.action === 'open') {
+            setIsOpen(true);
+          }
+          break;
       }
     };
 
@@ -711,6 +728,42 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
       window.removeEventListener('message', handleMessage);
     };
   }, [enablePageContext, extractCurrentPageContext]);
+
+  // 添加状态同步 - 向父页面发送状态变化消息
+  useEffect(() => {
+    // 检查是否在iframe环境中
+    const isInIframe = window.parent && window.parent !== window;
+    
+    if (isInIframe) {
+      // 向父页面发送状态变化消息
+      const stateData = {
+        isOpen,
+        isMinimized: false, // 项目中没有最小化，只有展开/收起
+        position: config.position || 'bottom-right',
+        buttonSize: {
+          width: 56,
+          height: 56
+        },
+        expandedSize: {
+          width: isOpen ? 384 : 56,
+          height: isOpen ? 500 : 56
+        },
+        offset: {
+          bottom: 16,
+          right: 16
+        }
+      };
+      
+      console.log('发送状态变化消息到父页面:', stateData);
+      window.parent.postMessage(
+        { 
+          type: 'ai-assistant-stateChange', 
+          data: stateData 
+        },
+        '*'
+      );
+    }
+  }, [isOpen, config.position]); // 依赖 isOpen 和 position 的变化
 
   // 停止语音识别 - 会发送当前文本
   const stopListening = useCallback(() => {
@@ -809,6 +862,8 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
       'get_weather': '天气查询',
       'web_search': '网络搜索',
       'submit_feedback': '反馈提交',
+      'submit_post': '论坛发帖',
+      'submit_request': '求助发布',
       // OpenManus工具
       'openmanus_web_automation': '网页自动化',
       'openmanus_code_execution': '代码执行',
@@ -1970,7 +2025,15 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
   // Anthropic 风格悬浮按钮 - 使用内联样式确保显示
   if (!isOpen) {
     return (
-      <div className={getPositionStyles()}>
+      <div 
+        className={getPositionStyles()}
+        style={{
+          // 悬浮按钮容器始终可点击
+          pointerEvents: 'auto',
+          // 当iframe收起时提高z-index确保悬浮按钮在最顶层
+          zIndex: floatingButtonClickable ? 2147483647 : 'auto'
+        }}
+      >
         <button
           onClick={() => setIsOpen(true)}
           style={{
@@ -1989,6 +2052,8 @@ export default function FloatingAssistant({ config = {}, onError }: FloatingAssi
             alignItems: 'center',
             gap: '12px',
             transform: 'scale(1)',
+            // 确保按钮本身也是可点击的
+            pointerEvents: 'auto'
           }}
           onMouseEnter={(e) => {
             e.currentTarget.style.backgroundColor = '#1f2937';

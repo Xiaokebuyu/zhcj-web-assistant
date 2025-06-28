@@ -82,6 +82,44 @@ export interface ToolCall {
       }
     },
 
+    {
+      type: "function",
+      function: {
+        name: "submit_post",
+        description: "在论坛发表新帖子",
+        parameters: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "帖子标题" },
+            content: { type: "string", description: "正文，不少于10字" },
+            type: { type: "integer", description: "帖子分类 0~5", default: 0 },
+            satoken: { type: "string", description: "用户登录 token(自动注入)", nullable: true }
+          },
+          required: ["title", "content"]
+        }
+      }
+    },
+
+    {
+      type: "function",
+      function: {
+        name: "submit_request",
+        description: "发布新的求助信息（残障人士使用）",
+        parameters: {
+          type: "object",
+          properties: {
+            content: { type: "string", description: "求助内容，不少于10字" },
+            type: { type: "integer", description: "求助类别 0~N", default: 0 },
+            urgent: { type: "integer", description: "紧急程度 0-普通 1-较急 2-紧急 3-危急", default: 0 },
+            isOnline: { type: "integer", description: "0=线下 1=线上", default: 1 },
+            address: { type: "string", description: "线下地址(仅 isOnline=0 时必填)", nullable: true },
+            satoken: { type: "string", description: "登录 token(自动注入)", nullable: true }
+          },
+          required: ["content"]
+        }
+      }
+    },
+
     // OpenManus工具定义
     {
       type: "function",
@@ -283,6 +321,69 @@ export interface ToolCall {
       const data = await res.json();
       return { success: data.code === 200, ...data };
     }
+
+    private static async submitPost(argsStr: string): Promise<object> {
+      const { title, content, type = 0, satoken } = JSON.parse(argsStr);
+
+      // 参数校验
+      if (!satoken) throw new Error("未登录，缺少 satoken");
+      if (!title || !content) throw new Error("标题和内容不能为空");
+      if (content.length < 10) throw new Error("帖子内容不少于10字");
+
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        satoken: satoken
+      };
+
+      const body = JSON.stringify({
+        ftype: Number(type),
+        ftitle: title,
+        fcontent: content
+      });
+
+      const res = await fetch('http://localhost:81/forum/publish', {
+        method: 'POST',
+        headers,
+        body,
+        credentials: 'include'
+      });
+
+      const data = await res.json();
+      return { success: data.code === 200, ...data };
+    }
+
+    private static async submitRequest(argsStr: string): Promise<object> {
+      const { content, type = 0, urgent = 0, isOnline = 1, address, satoken } = JSON.parse(argsStr);
+
+      // 参数校验
+      if (!satoken) throw new Error("未登录，缺少 satoken");
+      if (!content?.trim()) throw new Error("求助内容不能为空");
+      if (content.length < 10) throw new Error("求助内容不少于10字");
+      if (isOnline === 0 && !address?.trim()) throw new Error("线下求助必须填写地址");
+
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        satoken: satoken
+      };
+
+      const body = JSON.stringify({
+        rType: type,
+        rContent: content,
+        rUrgent: urgent,
+        rIsOnline: isOnline,
+        rAddress: address?.trim() || ''
+      });
+
+      const res = await fetch('http://localhost:81/request/publish', {
+        method: 'POST',
+        headers,
+        body,
+        credentials: 'include'
+      });
+
+      const data = await res.json();
+      return { success: data.code === 200, ...data };
+    }
     
     static async executeTools(toolCalls: ToolCall[], pageContext?: import('@/types').PageContext): Promise<ToolResult[]> {
       const results: ToolResult[] = [];
@@ -305,6 +406,22 @@ export interface ToolCall {
                 feedbackArgs.satoken = pageContext.auth.satoken;
               }
               result = await this.submitFeedback(JSON.stringify(feedbackArgs));
+              break;
+            case 'submit_post':
+              // 从pageContext中提取satoken并注入到工具参数中
+              let postArgs = JSON.parse(toolCall.function.arguments);
+              if (pageContext?.auth?.satoken) {
+                postArgs.satoken = pageContext.auth.satoken;
+              }
+              result = await this.submitPost(JSON.stringify(postArgs));
+              break;
+            case 'submit_request':
+              // 从pageContext中提取satoken并注入到工具参数中
+              let requestArgs = JSON.parse(toolCall.function.arguments);
+              if (pageContext?.auth?.satoken) {
+                requestArgs.satoken = pageContext.auth.satoken;
+              }
+              result = await this.submitRequest(JSON.stringify(requestArgs));
               break;
             case 'openmanus_web_automation':
               result = await this.createOpenManusTask(toolCall.function.arguments, 'web_automation');

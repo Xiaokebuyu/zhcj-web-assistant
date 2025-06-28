@@ -298,6 +298,12 @@
     }
   }
 
+  // z-index层级常量
+  const Z_INDEX_LEVELS = {
+    HIDDEN: 1,              // 收起状态：极低层级，仅高于页面内容，确保不阻挡任何Vue组件
+    VISIBLE: 2147483647     // 展开状态：最高优先级
+  };
+
   // 增强的AI助手类
   class AIAssistant {
     constructor(options = {}) {
@@ -307,6 +313,10 @@
       this.onError = options.onError || null;
       this.isLoaded = false;
       this.iframe = null;
+      
+      // 🆕 方案三：显示状态管理
+      this.isVisible = false;  // 默认收起状态
+      this.zIndexLevels = Z_INDEX_LEVELS;
       
       // 页面上下文相关
       this.pageExtractor = null;
@@ -318,6 +328,9 @@
       this.lastContextHash = '';
       this.isUpdatingContext = false;
       this.forceUpdatePromise = null;
+      
+      // 🆕 按钮交互区域管理
+      this.buttonInteractionArea = null;
 
       if (this.config.enablePageContext) {
         this.initPageContext();
@@ -453,6 +466,7 @@
       } else {
         this.container = document.createElement('div');
         this.container.id = 'ai-assistant-container';
+        // 🔧 局部穿透方案：容器保持全屏，默认为穿透状态
         this.container.style.cssText = `
           position: fixed;
           top: 0;
@@ -460,7 +474,7 @@
           width: 100%;
           height: 100%;
           pointer-events: none;
-          z-index: 2147483647;
+          z-index: ${this.zIndexLevels.HIDDEN};
         `;
         document.body.appendChild(this.container);
       }
@@ -491,15 +505,16 @@
     loadAssistant() {
       this.iframe = document.createElement('iframe');
       this.iframe.className = 'ai-assistant-iframe';
+      
+      // 🔧 局部穿透方案：iframe保持全屏，默认收起状态为穿透
       this.iframe.style.cssText = `
         position: fixed;
         width: 100%;
         height: 100%;
         top: 0;
         left: 0;
-        z-index: 2147483647;
-        /* 允许 iframe 接收点击事件 */
-        pointer-events: auto;
+        z-index: ${this.zIndexLevels.HIDDEN};
+        pointer-events: none;
         background: transparent;
       `;
 
@@ -521,6 +536,19 @@
         if (this.currentContext) {
           this.postMessage('updateContext', { context: this.currentContext });
         }
+        
+        // 🔑 重要：立即发送悬浮按钮可点击状态（因为默认是收起状态）
+        setTimeout(() => {
+          if (this.iframe && this.iframe.contentWindow) {
+            this.iframe.contentWindow.postMessage({
+              type: 'needFloatingButtonClickable',
+              data: { 
+                clickable: !this.isVisible // 收起状态时需要悬浮按钮可点击
+              }
+            }, '*');
+            console.log('📤 发送初始悬浮按钮状态:', !this.isVisible);
+          }
+        }, 100); // 延迟100ms确保iframe内容完全加载
       };
 
       this.iframe.onerror = (error) => {
@@ -552,6 +580,19 @@
               context: this.currentContext,
               timestamp: Date.now()
             });
+            
+            // 🔑 重要：AI助手准备就绪后立即发送悬浮按钮状态
+            setTimeout(() => {
+              if (this.iframe && this.iframe.contentWindow) {
+                this.iframe.contentWindow.postMessage({
+                  type: 'needFloatingButtonClickable',
+                  data: { 
+                    clickable: !this.isVisible // 收起状态时需要悬浮按钮可点击
+                  }
+                }, '*');
+                console.log('📤 AI助手就绪后发送悬浮按钮状态:', !this.isVisible);
+              }
+            }, 50);
             break;
           
           case 'ai-assistant-resize':
@@ -581,6 +622,22 @@
             });
             break;
           
+          // 🆕 方案三：处理显示状态变化消息
+          case 'ai-assistant-show':
+            console.log('收到展开消息');
+            this.updateDisplayState(true);
+            break;
+          
+          case 'ai-assistant-hide':
+            console.log('收到收起消息');
+            this.updateDisplayState(false);
+            break;
+          
+          case 'ai-assistant-stateChange':
+            console.log('收到助手状态变化:', data);
+            this.handleAssistantStateChange(data);
+            break;
+          
           default:
             break;
         }
@@ -594,6 +651,129 @@
           { type: `ai-assistant-${type}`, data },
           this.config.baseUrl
         );
+      }
+    }
+
+    // 处理助手状态变化
+    handleAssistantStateChange(stateData) {
+      const { isOpen, position, buttonSize, offset } = stateData;
+      
+      if (!this.iframe) return;
+      
+      if (isOpen) {
+        // 展开状态：允许iframe接收所有事件
+        this.iframe.style.pointerEvents = 'auto';
+        console.log('✅ 助手展开 - iframe启用完整交互');
+        
+        // 移除可能存在的交互区域
+        this.removeInteractionArea();
+        
+      } else {
+        // 收起状态：禁用iframe事件，创建精准交互区域
+        this.iframe.style.pointerEvents = 'none';
+        console.log('✅ 助手收起 - iframe禁用交互，创建按钮交互区域');
+        
+        // 创建精准的按钮交互区域
+        this.createButtonInteractionArea(position, buttonSize, offset);
+      }
+    }
+
+    // 创建按钮交互区域
+    createButtonInteractionArea(position, buttonSize, offset) {
+      // 移除已存在的交互区域
+      this.removeInteractionArea();
+      
+      // 创建交互区域元素
+      this.buttonInteractionArea = document.createElement('div');
+      this.buttonInteractionArea.id = 'ai-assistant-button-area';
+      this.buttonInteractionArea.style.cssText = `
+        position: fixed;
+        width: ${buttonSize.width}px;
+        height: ${buttonSize.height}px;
+        ${this.getPositionCSS(position, offset)};
+        z-index: 2147483648;
+        pointer-events: auto;
+        background: transparent;
+        border-radius: 16px;
+        cursor: pointer;
+      `;
+      
+      // 点击事件：通知iframe展开助手
+      this.buttonInteractionArea.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        console.log('🖱️ 点击悬浮按钮区域，通知iframe展开助手');
+        this.postMessage('buttonClicked', { action: 'open' });
+      });
+      
+      // 添加到页面
+      document.body.appendChild(this.buttonInteractionArea);
+      console.log('✅ 创建按钮交互区域:', buttonSize);
+    }
+
+    // 移除交互区域
+    removeInteractionArea() {
+      if (this.buttonInteractionArea) {
+        this.buttonInteractionArea.remove();
+        this.buttonInteractionArea = null;
+        console.log('🗑️ 移除按钮交互区域');
+      }
+    }
+
+    // 根据位置配置生成CSS
+    getPositionCSS(position, offset) {
+      switch (position) {
+        case 'bottom-left':
+          return `bottom: ${offset.bottom}px; left: ${offset.left || 16}px;`;
+        case 'top-right':
+          return `top: ${offset.top || 16}px; right: ${offset.right}px;`;
+        case 'top-left':
+          return `top: ${offset.top || 16}px; left: ${offset.left || 16}px;`;
+        default: // bottom-right
+          return `bottom: ${offset.bottom}px; right: ${offset.right}px;`;
+      }
+    }
+
+    // 🔧 局部穿透方案：通过pointer-events控制穿透，iframe内部处理悬浮按钮可点击
+    updateDisplayState(isVisible) {
+      console.log(`🔄 更新显示状态: ${isVisible ? '展开' : '收起'}`);
+      
+      this.isVisible = isVisible;
+      
+      if (this.iframe) {
+        if (isVisible) {
+          // 展开状态：最高层级 + 可交互
+          this.iframe.style.zIndex = this.zIndexLevels.VISIBLE;
+          this.iframe.style.pointerEvents = 'auto';
+          console.log('✅ 助手已展开 - 最高优先级，可完全交互');
+        } else {
+          // 收起状态：点击穿透，iframe内部需要特殊处理悬浮按钮
+          this.iframe.style.zIndex = this.zIndexLevels.HIDDEN;
+          this.iframe.style.pointerEvents = 'none';
+          console.log('✅ 助手已收起 - 点击穿透，Vue页面可正常交互');
+        }
+      }
+      
+      // 同步更新容器
+      if (this.container) {
+        this.container.style.zIndex = isVisible ? this.zIndexLevels.VISIBLE : this.zIndexLevels.HIDDEN;
+        this.container.style.pointerEvents = isVisible ? 'auto' : 'none';
+      }
+      
+      // 🔑 关键：通知iframe内部状态变化，让内部处理悬浮按钮的局部可点击
+      this.postMessage('displayStateChanged', { 
+        isVisible,
+        needFloatingButtonClickable: !isVisible // 收起时需要悬浮按钮可点击
+      });
+      
+      // 单独发送悬浮按钮可点击状态消息
+      if (this.iframe && this.iframe.contentWindow) {
+        this.iframe.contentWindow.postMessage({
+          type: 'needFloatingButtonClickable',
+          data: { 
+            clickable: !isVisible // 收起状态时需要悬浮按钮可点击
+          }
+        }, '*');
       }
     }
 
@@ -633,13 +813,31 @@
       this.startContextMonitoring();
     }
 
-    // 公共API方法
+    // 🆕 方案三：增强的公共API方法
     show() {
+      console.log('🔧 调用show() - 展开助手');
+      this.updateDisplayState(true);
       this.postMessage('show');
     }
 
     hide() {
+      console.log('🔧 调用hide() - 收起助手'); 
+      this.updateDisplayState(false);
       this.postMessage('hide');
+    }
+
+    // 🆕 获取当前显示状态
+    isAssistantVisible() {
+      return this.isVisible;
+    }
+
+    // 🆕 切换显示状态
+    toggle() {
+      if (this.isVisible) {
+        this.hide();
+      } else {
+        this.show();
+      }
     }
 
     // 手动更新页面上下文
@@ -661,6 +859,12 @@
     // 销毁助手
     destroy() {
       this.stopContextMonitoring();
+      
+      // 清理交互区域
+      this.removeInteractionArea();
+      
+      // 🆕 方案三：重置显示状态
+      this.isVisible = false;
       
       if (this.iframe) {
         this.iframe.remove();
