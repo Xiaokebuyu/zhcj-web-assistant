@@ -73,8 +73,8 @@ export interface ToolCall {
           properties: {
             content: { type: "string", description: "反馈正文，≤200 字" },
             type:    { type: "integer", description: "反馈类别 0~3", default: 0 },
-            name:    { type: "string", description: "反馈人姓名", nullable: true },
-            phone:   { type: "string", description: "手机号(11 位)", nullable: true },
+            name:    { type: "string", description: "反馈人姓名", nullable: false },
+            phone:   { type: "string", description: "手机号(11 位)", nullable: false },
             satoken: { type: "string", description: "当前登录 token(自动注入)", nullable: true }
           },
           required: ["content"]
@@ -115,7 +115,7 @@ export interface ToolCall {
             address: { type: "string", description: "线下地址(仅 isOnline=0 时必填)", nullable: true },
             satoken: { type: "string", description: "登录 token(自动注入)", nullable: true }
           },
-          required: ["content"]
+          required: ["content", "isOnline"]
         }
       }
     },
